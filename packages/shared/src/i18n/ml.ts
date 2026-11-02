@@ -1,0 +1,28 @@
+import type { MessageKey } from './en.js';
+
+export const ml: Partial<Record<MessageKey, string>> = {
+  'nav.home': 'ഹോം',
+  'nav.capture': 'ക്യാപ്ചർ',
+  'nav.approvals': 'അംഗീകാരങ്ങൾ',
+  'nav.sales': 'വിൽപ്പന',
+  'nav.more': 'കൂടുതൽ',
+  'home.cash': 'കാഷ് & ബാങ്ക്',
+  'home.receivables': 'ലഭിക്കാനുള്ളത്',
+  'home.payables': 'നൽകാനുള്ളത്',
+  'home.todaySales': 'ഇന്നത്തെ വിൽപ്പന',
+  'home.todayExpenses': 'ഇന്നത്തെ ചെലവ്',
+  'home.profitMtd': 'ലാഭം (മാസം)',
+  'home.taxDue': 'നികുതി ബാക്കി',
+  'action.confirm': 'സ്ഥിരീകരിക്കുക',
+  'action.edit': 'തിരുത്തുക',
+  'action.cancel': 'റദ്ദാക്കുക',
+  'auth.phone': 'വാട്സ്ആപ്പ് നമ്പർ',
+  'auth.sendOtp': 'വാട്സ്ആപ്പിൽ കോഡ് അയയ്ക്കുക',
+  'bot.welcome': 'നമസ്കാരം {name}! ബില്ലിന്റെ ഫോട്ടോ, വോയ്സ് നോട്ട് അയയ്ക്കൂ, അല്ലെങ്കിൽ "ചായക്ക് 500 കൊടുത്തു" എന്ന് ടൈപ്പ് ചെയ്യൂ.',
+  'bot.received': 'കിട്ടി 👍 ഡോക്യുമെന്റ് വായിക്കുന്നു…',
+  'bot.draftSummary': '{type}\n{party}\nതീയതി: {date}\nആകെ: {total}\n\n1 സ്ഥിരീകരിക്കുക · 2 തിരുത്തുക · 3 റദ്ദാക്കുക',
+  'bot.confirmed': 'രേഖപ്പെടുത്തി ✅ {ref}',
+  'bot.cancelled': 'റദ്ദാക്കി. ഒന്നും രേഖപ്പെടുത്തിയില്ല.',
+  'bot.needsReview': 'ഞങ്ങളുടെ അക്കൗണ്ടന്റ് ഇത് പരിശോധിച്ച് ഉടൻ മറുപടി നൽകും.',
+  'bot.invalidChoice': 'ദയവായി 1, 2 അല്ലെങ്കിൽ 3 എന്ന് മറുപടി നൽകുക.',
+};

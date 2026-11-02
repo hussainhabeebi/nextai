@@ -1,0 +1,65 @@
+{
+  "name": "@nextai/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "dotenv -e ../../.env -- sh -c 'DATABASE_URL=${DATABASE_MIGRATE_URL:-$DATABASE_URL} prisma migrate deploy'",
+    "seed": "tsx prisma/seed.ts",
+    "openapi": "tsx scripts/openapi.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@aws-sdk/client-s3": "^3.716.0",
+    "@aws-sdk/s3-request-presigner": "^3.716.0",
+    "@fastify/cookie": "^11.0.1",
+    "@fastify/cors": "^10.0.1",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/multipart": "^9.0.1",
+    "@fastify/rate-limit": "^10.2.1",
+    "@fastify/swagger": "^9.4.0",
+    "@fastify/swagger-ui": "^5.2.0",
+    "@nextai/chatwoot-client": "workspace:*",
+    "@nextai/erpnext-client": "workspace:*",
+    "@nextai/payments": "workspace:*",
+    "@nextai/shared": "workspace:*",
+    "@prisma/client": "^6.19.0",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.34.0",
+    "fastify": "^5.2.0",
+    "fastify-plugin": "^5.0.1",
+    "fastify-type-provider-zod": "^4.0.2",
+    "ioredis": "^5.4.2",
+    "jose": "^5.9.6",
+    "otplib": "^12.0.1",
+    "pino": "^9.5.0",
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^10.16.0",
+    "@testcontainers/redis": "^10.16.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/pg": "^8.23.1",
+    "dotenv-cli": "^8.0.0",
+    "pg": "^8.23.1",
+    "pino-pretty": "^13.0.0",
+    "prisma": "^6.19.0",
+    "tsx": "^4.19.2"
+  }
+}
