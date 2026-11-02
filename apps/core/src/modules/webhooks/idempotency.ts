@@ -24,3 +24,9 @@ export async function markProcessed(prisma: PrismaClient, id: string | undefined
   if (!id) return;
   await withSystemTx(prisma, (tx) => tx.webhookEvent.update({ where: { id }, data: { processedAt: new Date(), error: error?.slice(0, 1000) } }));
 }
+
+/** Remove a claim after a failed attempt so the provider's retry is processed again. */
+export async function releaseEvent(prisma: PrismaClient, id: string | undefined): Promise<void> {
+  if (!id) return;
+  await withSystemTx(prisma, (tx) => tx.webhookEvent.delete({ where: { id } }));
+}

@@ -6,6 +6,7 @@ import { logger } from '../../lib/logger.js';
 import { erpContext } from '../erpnext/mappers.js';
 import { incrementUsage } from '../usage/usage.js';
 import { sendWhatsApp } from './whatsapp.js';
+import { planLimits, usageFor } from '../billing/gating.js';
 
 type SI = { name: string; customer: string; grand_total: number; outstanding_amount: number; due_date: string; currency: string; contact_mobile?: string; docstatus: number };
 
@@ -36,6 +37,7 @@ async function customerPhone(c: Container, tenant: Tenant, customer: string, hin
 export async function sendInvoice(c: Container, job: { tenantId: string; invoiceName: string; draftId?: string }) {
   const tenant = await loadTenant(c, job.tenantId);
   if (await alreadySent(c, tenant.id, 'invoice', job.invoiceName)) return { skipped: 'already_sent' };
+  if ((await usageFor(c, tenant, 'invoicesSentPerMonth')) >= (await planLimits(c, tenant)).invoicesSentPerMonth) return { skipped: 'plan_limit' };
   const erp = c.erp(tenant);
   const inv = await erp.get<SI>('Sales Invoice', job.invoiceName);
   if (inv.docstatus !== 1) return { skipped: 'not_submitted' };

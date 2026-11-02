@@ -8,6 +8,7 @@ import { tenantDb } from '../../lib/db.js';
 import { tenantKey } from '../../storage/storage.js';
 import { handleText } from '../intents/flow.js';
 import { incrementUsage } from '../usage/usage.js';
+import { planLimits, usageFor } from '../billing/gating.js';
 import type { BotContext } from './context.js';
 
 const EXT: Record<string, string> = {
@@ -49,6 +50,19 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
 
   if (tenant.status === 'suspended') {
     await cw.sendText(conversationId, t(ulang, 'billing.suspended', { link: `${env().APP_URL}/billing` }));
+    return 'billing_blocked';
+  }
+
+  // Plan gating: monthly message cap, and OCR page cap for documents.
+  const limits = await planLimits(c, tenant);
+  const upgrade = `${env().APP_URL}/billing`;
+  if ((await usageFor(c, tenant, 'messagesPerMonth')) > limits.messagesPerMonth) {
+    await cw.sendText(conversationId, t(ulang, 'bot.planLimit', { what: 'messages', link: upgrade }));
+    return 'billing_blocked';
+  }
+  const hasDocs = (evt.attachments ?? []).some((a) => a.file_type !== 'audio');
+  if (hasDocs && (await usageFor(c, tenant, 'ocrPagesPerMonth')) >= limits.ocrPagesPerMonth) {
+    await cw.sendText(conversationId, t(ulang, 'bot.planLimit', { what: 'bill scanning', link: upgrade }));
     return 'billing_blocked';
   }
 

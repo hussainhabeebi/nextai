@@ -113,6 +113,9 @@ importers:
       pino:
         specifier: ^9.5.0
         version: 9.14.0
+      stripe:
+        specifier: ^17.7.0
+        version: 17.7.0
       zod:
         specifier: ^3.24.1
         version: 3.25.76
