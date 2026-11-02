@@ -10,6 +10,14 @@ import { cn } from '@/lib/cn';
 import { useOnline } from '@/lib/hooks';
 import { useI18n } from '@/lib/i18n';
 
+const isImpersonating = (token: string) => {
+  try {
+    return !!(JSON.parse(atob(token.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/'))) as { imp?: string }).imp;
+  } catch {
+    return false;
+  }
+};
+
 function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const { t } = useI18n();
@@ -54,6 +62,7 @@ function Shell({ children }: { children: ReactNode }) {
             Account suspended — read-only. Tap to pay.
           </Link>
         )}
+        {session && isImpersonating(session.accessToken) && <div className="bg-black px-4 py-1 text-center text-xs text-white">Admin view-only session (audited)</div>}
         {!online && <div className="bg-line px-4 py-1 text-center text-xs">Offline — captures will sync later</div>}
       </div>
       <main>{children}</main>

@@ -29,6 +29,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => void off();
   }, []);
   useEffect(() => {
+    // Read-only "view as tenant" from the admin console: token arrives in the URL fragment (never sent to servers).
+    const m = window.location.hash.match(/^#imp=([\w-]+\.[\w-]+\.[\w-]+)$/);
+    if (m) {
+      const claims = JSON.parse(atob(m[1]!.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/'))) as { sub: string; tid: string };
+      history.replaceState(null, '', window.location.pathname);
+      api.setSession({ accessToken: m[1]!, tenantId: claims.tid, userId: claims.sub, memberships: [] });
+      setReady(true);
+      return;
+    }
     if (api.current) return;
     void api.refresh().then((s) => {
       if (!s) router.replace('/login');

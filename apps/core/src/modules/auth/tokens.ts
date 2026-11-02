@@ -7,6 +7,8 @@ export interface AppClaims {
   tid: string; // tenant id
   role: 'owner' | 'staff' | 'tenant_accountant';
   typ: 'app';
+  /** read-only impersonation ("view as tenant") by this platform admin id */
+  imp?: string;
 }
 export interface AdminClaims {
   sub: string;
