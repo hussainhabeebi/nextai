@@ -1,12 +1,4 @@
-node_modules
-dist
-.next
-.turbo
-.astro
-coverage
+node_modules/
+dist/
+.astro/
 .env
-.env.*
-!.env.example
-*.log
-playwright-report
-test-results
