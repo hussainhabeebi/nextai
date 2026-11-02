@@ -87,3 +87,37 @@ export async function createTenant(
     return { tenant: updated, owner };
   });
 }
+
+import { jobHandlers } from '../src/jobs/handlers.js';
+/** Run queued jobs inline until the queue is empty (simulates the worker). */
+export async function drain(c: TestContainer, max = 50) {
+  const handlers = jobHandlers(c);
+  const ran: string[] = [];
+  for (let i = 0; i < max && c.queue.jobs.length; i++) {
+    const job = c.queue.jobs.shift()!;
+    const h = handlers[job.name];
+    if (!h) continue; // outbound etc. not under test here
+    ran.push(job.name);
+    await h(job.data);
+  }
+  return ran;
+}
+
+export function extractionBytes(over: Record<string, unknown> = {}) {
+  const base = {
+    docType: 'purchase_invoice',
+    supplierName: 'Kerala Paper Mart Pvt Ltd',
+    supplierTaxId: '27AAPFU0939F1ZV',
+    invoiceNo: 'KPM-1042',
+    date: new Date().toISOString().slice(0, 10),
+    currency: 'INR',
+    lines: [{ description: 'A4 paper', qty: 10, rate: 250, amount: 2500 }],
+    subtotal: 2500,
+    tax: { cgst: 225, sgst: 225, igst: 0, vat: 0 },
+    total: 2950,
+    paymentMode: 'credit',
+    confidence: 0.93,
+    ...over,
+  };
+  return new TextEncoder().encode(JSON.stringify(base));
+}

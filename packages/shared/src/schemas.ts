@@ -37,6 +37,12 @@ export const tenantSettingsSchema = z.object({
   defaultCashAccount: z.string().optional(),
   defaultBankAccount: z.string().optional(),
   erpCompany: z.string().optional(),
+  /** ERPNext company abbreviation used in account names, e.g. "Cash - AIL" */
+  companyAbbr: z.string().optional(),
+  /** Override default account / tax template names */
+  accounts: z.record(z.string()).default({}),
+  taxTemplates: z.record(z.string()).default({}),
+  autoSendInvoices: z.boolean().default(true),
   featureFlags: z.record(z.boolean()).default({}),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;

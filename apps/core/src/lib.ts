@@ -7,3 +7,5 @@ export * from './lib/queue.js';
 export * from './lib/logger.js';
 export * from './lib/crypto.js';
 export { buildApp } from './app.js';
+export * from './jobs/handlers.js';
+export { createTenantRecord } from './modules/tenants/service.js';
