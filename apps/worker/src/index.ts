@@ -2,13 +2,13 @@ import { BullJobQueue, createContainer, env, jobHandlers, logger } from '@nextai
 import { QUEUES, type QueueName } from '@nextai/shared';
 import { DelayedError, Queue, Worker, type Job } from 'bullmq';
 import { TenantSemaphore } from './concurrency.js';
-import { schedulerHandlers, SCHEDULES } from './jobs/schedules.js';
+import { SCHEDULES } from './jobs/schedules.js';
 
 process.env.SERVICE_NAME ??= 'worker';
 const c = createContainer();
 env();
 const connection = c.redis;
-const handlers = { ...jobHandlers(c), ...schedulerHandlers(c) };
+const handlers = jobHandlers(c);
 
 /** Global throughput limits (per queue, across all tenants) and per-queue worker concurrency. */
 const QUEUE_CONFIG: Partial<Record<QueueName, { concurrency: number; limiter?: { max: number; duration: number }; perTenant: number }>> = {

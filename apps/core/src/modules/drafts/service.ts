@@ -222,7 +222,7 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
     if ((draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && p.partyName && p.expenseAccount) {
       await learnVendor(c, tenantId, p.partyName, p.partyTaxId, p.expenseAccount, p.taxTemplate);
     }
-    if (draft.type === 'sales_invoice' && ctx.settings.autoSendInvoices && p.partyPhone) {
+    if (draft.type === 'sales_invoice' && ctx.settings.autoSendInvoices) {
       await c.queue.enqueue(QUEUES.outboundInvoice, { tenantId, invoiceName: erpName, draftId, source: 'nextai' }, { jobId: `inv-${tenantId}-${erpName}` });
     }
     if (draft.conversationId) {

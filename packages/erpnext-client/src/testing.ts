@@ -38,6 +38,8 @@ export class FakeErpClient implements ErpClient {
     } else if (Array.isArray(opts.filters)) {
       for (const [k, op, v] of opts.filters) {
         if (op === '=') rows = rows.filter((r) => r[k] === v);
+        if (op === '>') rows = rows.filter((r) => Number(r[k]) > Number(v));
+        if (op === 'in' && Array.isArray(v)) rows = rows.filter((r) => v.includes(r[k]));
         if (op === 'like' && typeof v === 'string') {
           const needle = v.replace(/%/g, '').toLowerCase();
           rows = rows.filter((r) => String(r[k] ?? '').toLowerCase().includes(needle));

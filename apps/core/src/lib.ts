@@ -9,3 +9,4 @@ export * from './lib/crypto.js';
 export { buildApp } from './app.js';
 export * from './jobs/handlers.js';
 export { createTenantRecord } from './modules/tenants/service.js';
+export { SCHEDULE_QUEUES } from './modules/scheduling/schedulers.js';

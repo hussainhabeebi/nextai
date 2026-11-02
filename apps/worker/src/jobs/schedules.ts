@@ -1,10 +1,9 @@
-import type { Container } from '@nextai/core';
-import { QUEUES, type QueueName } from '@nextai/shared';
+import { SCHEDULE_QUEUES } from '@nextai/core';
+import type { QueueName } from '@nextai/shared';
 
-export const SCHEDULES: Array<{ id: string; queue: QueueName; cron: string }> = [];
-
-/** Cross-tenant scheduler handlers (filled in milestone 4). */
-export function schedulerHandlers(_c: Container): Partial<Record<QueueName, (d: unknown) => Promise<unknown>>> {
-  void QUEUES;
-  return {};
-}
+/** Repeatable cross-tenant schedulers; handlers live in @nextai/core jobHandlers. */
+export const SCHEDULES: Array<{ id: string; queue: QueueName; cron: string }> = Object.entries(SCHEDULE_QUEUES).map(([queue, cron]) => ({
+  id: `sched:${queue}`,
+  queue: queue as QueueName,
+  cron,
+}));
