@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { Container } from '../../container.js';
 import { appAuthRoutes } from './auth.js';
 import { meRoutes } from './me.js';
+import { appRoutes } from './app.js';
 
 export const v1Routes =
   (c: Container): FastifyPluginAsyncZod =>
@@ -12,5 +13,6 @@ export const v1Routes =
       authed.addHook('onRequest', authed.requireApp);
       authed.addHook('preHandler', authed.loadTenant);
       await authed.register(meRoutes(c));
+      await authed.register(appRoutes(c));
     });
   };

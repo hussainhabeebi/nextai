@@ -10,3 +10,6 @@ coverage
 *.log
 playwright-report
 test-results
+.data
+dump.rdb
+*.tsbuildinfo

@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 246 248 247;
+  --card: 255 255 255;
+  --fg: 17 24 22;
+  --muted: 100 112 108;
+  --line: 226 232 230;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: 10 15 14;
+    --card: 20 28 26;
+    --fg: 236 242 240;
+    --muted: 150 164 160;
+    --line: 42 54 51;
+    color-scheme: dark;
+  }
+}
+html,
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  overscroll-behavior-y: contain;
+}
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}

@@ -1,5 +1,8 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 /** All objects live under tenants/{tenant_id}/... – enforced here, not by callers. */
 export function tenantKey(tenantId: string, ...parts: string[]): string {
@@ -68,5 +71,49 @@ export class MemoryStorage implements ObjectStorage {
   async signedUrl(tenantId: string, key: string, expiresSeconds = 300) {
     assertTenantKey(tenantId, key);
     return `memory://${key}?expires=${Date.now() + expiresSeconds * 1000}`;
+  }
+}
+
+/**
+ * Local filesystem storage for development (shared by API + worker). URLs are HMAC-signed with
+ * an expiry and served by GET /files/* in core — same "signed URLs only" contract as R2.
+ */
+export class LocalFsStorage implements ObjectStorage {
+  constructor(
+    private readonly dir: string,
+    private readonly apiUrl: string,
+    private readonly secret: string,
+  ) {}
+
+  private path(key: string) {
+    return join(this.dir, ...key.split('/'));
+  }
+
+  async put(tenantId: string, key: string, body: Uint8Array, contentType: string) {
+    assertTenantKey(tenantId, key);
+    await mkdir(dirname(this.path(key)), { recursive: true });
+    await writeFile(this.path(key), body);
+    await writeFile(`${this.path(key)}.type`, contentType);
+  }
+
+  async get(tenantId: string, key: string) {
+    assertTenantKey(tenantId, key);
+    const body = new Uint8Array(await readFile(this.path(key)));
+    const contentType = await readFile(`${this.path(key)}.type`, 'utf8').catch(() => 'application/octet-stream');
+    return { body, contentType };
+  }
+
+  sign(key: string, exp: number) {
+    return createHmac('sha256', this.secret).update(`${key}:${exp}`).digest('hex');
+  }
+
+  async signedUrl(tenantId: string, key: string, expiresSeconds = 300) {
+    assertTenantKey(tenantId, key);
+    const exp = Math.floor(Date.now() / 1000) + expiresSeconds;
+    return `${this.apiUrl}/files/${key}?exp=${exp}&sig=${this.sign(key, exp)}`;
+  }
+
+  verify(key: string, exp: number, sig: string) {
+    return exp > Date.now() / 1000 && sig.length === 64 && timingSafeEqual(Buffer.from(sig), Buffer.from(this.sign(key, exp)));
   }
 }
