@@ -31,7 +31,7 @@ Return a non-2xx status for errors. Only return 2xx once onboarding has been acc
 ## Before commercial launch
 
 - Connect the API and the business WhatsApp number.
-- Confirm real prices and plan scope; all displayed amounts are marked placeholders.
+- UAE monthly pricing: Base AED 99 (1 user), Growth AED 299 (4 users), Pro AED 599 (10 users). India prices remain placeholders; confirm plan scope before launch.
 - Replace draft privacy and terms pages with approved content.
 - Confirm service/security promises reflect the actual service.
 - Add approved Malayalam and Arabic translations in `src/config.ts`. The locale routes currently display English with an explicit translation notice; Arabic uses RTL. Source-English strings can be used as translation keys. The three language pages preserve UTMs.

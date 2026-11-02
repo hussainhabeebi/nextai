@@ -112,13 +112,13 @@ Country toggle: India ₹ / UAE AED
 
 | Plan | Supporting line | Included | Price | CTA |
 | --- | --- | --- | --- | --- |
-| Starter | A tidy start for your books. | Bills & expenses recorded; customer invoices; simple reports | [₹] / [AED] per month | Start free |
-| Business — Most popular | More help for a busier business. | Everything in Starter; GST/VAT-ready books; payment reminders; bank matching; team access | [₹] / [AED] per month | Start free |
-| Pro | An accountant in your corner. | Everything in Business; dedicated accountant review; filing through tax partners | [₹] / [AED] per month | Start free |
+| Base | A tidy start for your books. | Bills & expenses recorded; customer invoices; simple reports | AED 99/month · 1 user; India price pending | Start free |
+| Growth — Most popular | More help for a busier business. | Everything in Base; GST/VAT-ready books; payment reminders; bank matching; team access | AED 299/month · 4 users; India price pending | Start free |
+| Pro | An accountant in your corner. | Everything in Growth; dedicated accountant review; filing through tax partners | AED 599/month · 10 users; India price pending | Start free |
 
-Price to be confirmed.
+User limits: Base — 1 user; Growth — 4 users; Pro — 10 users.
 
-Prices are placeholders. Final pricing, tax scope and any filing fees will be confirmed before you subscribe.
+UAE plans are priced in AED per month. India pricing, tax scope and any filing fees will be confirmed before you subscribe.
 
 ## Security
 
@@ -152,7 +152,7 @@ You can review and approve every entry. Flag anything that looks wrong in the ch
 
 **Can my staff use it?**
 
-Yes. The Business and Pro plans include team access, so your staff can send bills while you stay in control.
+Yes. The Growth and Pro plans include team access, so your staff can send bills while you stay in control.
 
 **How do I cancel?**
 

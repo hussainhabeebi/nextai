@@ -16,8 +16,8 @@ let chosenPlan='';
 function track(name:string, detail:Record<string,unknown>={}){window.dispatchEvent(new CustomEvent('nextai:analytics',{detail:{event:name,...detail,utm}}));}
 const isAE = navigator.language.toLowerCase().includes('-ae') || Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Dubai';
 country.value=isAE?'AE':'IN'; dial.value=isAE?'971':'91';
-function setMarket(market:string){document.querySelectorAll<HTMLButtonElement>('[data-market]').forEach(b=>{const selected=b.dataset.market===market;b.classList.toggle('active',selected);b.setAttribute('aria-pressed',String(selected));});document.querySelectorAll('[data-price]').forEach(el=>el.textContent=market==='AE'?'[AED]':'[₹]');}
-setMarket(country.value);
+function setMarket(market:string){document.querySelectorAll<HTMLButtonElement>('[data-market]').forEach(b=>{const selected=b.dataset.market===market;b.classList.toggle('active',selected);b.setAttribute('aria-pressed',String(selected));});document.querySelectorAll<HTMLElement>('[data-price]').forEach(el=>el.textContent=market==='AE'?`AED ${el.dataset.aed}`:'[₹]');}
+setMarket('AE');
 document.querySelectorAll<HTMLButtonElement>('[data-market]').forEach(b=>b.addEventListener('click',()=>setMarket(b.dataset.market!)));
 country.addEventListener('change',()=>{dial.value=country.value==='AE'?'971':'91'});
 dial.addEventListener('change',()=>{country.value=dial.value==='971'?'AE':'IN'});
