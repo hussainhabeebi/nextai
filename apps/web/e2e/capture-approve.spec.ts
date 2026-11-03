@@ -2,9 +2,11 @@ import { expect, test } from '@playwright/test';
 
 const PHONE = process.env.E2E_PHONE ?? '+919999999999'; // seeded demo owner
 
+// Fully random name so it never fuzzy-matches a vendor learned in an earlier run.
+const SUPPLIER = Array.from({ length: 10 }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join('').replace(/^./, (c) => c.toUpperCase()) + ' Traders';
 const bill = {
   docType: 'purchase_invoice',
-  supplierName: 'E2E Stationers',
+  supplierName: SUPPLIER,
   supplierTaxId: null,
   invoiceNo: `E2E-${Date.now()}`,
   date: new Date().toISOString().slice(0, 10),
@@ -32,13 +34,13 @@ test('login → capture → approve → posted', async ({ page }) => {
   await page.getByRole('button', { name: /Upload 1/ }).click();
   await expect(page.getByRole('status')).toContainText(/Uploaded|Saved offline/);
 
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Approvals' }).click();
   await expect(async () => {
-    await page.reload();
-    await expect(page.getByText('E2E Stationers').first()).toBeVisible({ timeout: 2000 });
+    await page.goto('/approvals');
+    await expect(page.getByText(SUPPLIER).first()).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 30_000 });
-  await page.getByText('E2E Stationers').first().click();
-  await expect(page.getByText('₹1,200.00')).toBeVisible();
+  await page.getByText(SUPPLIER).first().click();
+  await page.waitForURL(/\/approvals\/[0-9a-f-]{36}$/);
+  await expect(page.getByText('₹1,200.00').first()).toBeVisible();
   await page.getByRole('button', { name: 'Confirm' }).click();
 
   await expect(async () => {
