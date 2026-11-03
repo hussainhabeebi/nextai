@@ -13,7 +13,8 @@ import { FakeProvisionerClient, HttpProvisionerClient } from './modules/provisio
 import { RedisConversationStore } from './state/conversation.js';
 import { createRedis } from './state/redis.js';
 import { LocalFsStorage, R2Storage } from './storage/storage.js';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 /** Build the production container from env. */
 export function createContainer(): Container & { close: () => Promise<void> } {
@@ -24,7 +25,7 @@ export function createContainer(): Container & { close: () => Promise<void> } {
   const storage =
     e.R2_ACCOUNT_ID && e.R2_ACCESS_KEY_ID && e.R2_SECRET_ACCESS_KEY
       ? new R2Storage(e.R2_ACCOUNT_ID, e.R2_ACCESS_KEY_ID, e.R2_SECRET_ACCESS_KEY, e.R2_BUCKET)
-      : new LocalFsStorage(resolve(process.env.LOCAL_STORAGE_DIR ?? '.data/storage'), e.API_URL, e.JWT_REFRESH_SECRET);
+      : new LocalFsStorage(resolve(process.env.LOCAL_STORAGE_DIR ?? join(tmpdir(), 'nextai-storage')), e.API_URL, e.JWT_REFRESH_SECRET);
   // MOCK_EXTERNALS=true lets the whole stack run locally without ERPNext/Chatwoot.
   const fakeErp = new Map<string, FakeErpClient>();
   const fakeCw = new Map<string, FakeChatwootClient>();

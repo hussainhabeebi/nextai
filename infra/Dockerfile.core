@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1.7
+FROM node:20-bookworm-slim AS base
+RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /repo
+
+FROM base AS build
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/core ./apps/core
+RUN pnpm install --frozen-lockfile --filter @nextai/core... \
+ && pnpm --filter "@nextai/core^..." build && pnpm --filter @nextai/core build \
+ && pnpm deploy --filter @nextai/core --prod --legacy /out \
+ && cp -r apps/core/prisma /out/prisma && cd /out && npx prisma generate
+
+FROM base AS runtime
+ENV NODE_ENV=production PORT=8090
+WORKDIR /app
+COPY --from=build /out ./
+USER node
+EXPOSE 8090
+HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "dist/server.js"]

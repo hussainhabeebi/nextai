@@ -1,0 +1,15 @@
+{
+  "name": "@nextai/landing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --port 4321",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro sync && echo landing ok",
+    "lint": "echo 'landing: no lint'",
+    "test": "echo 'landing: no tests'"
+  },
+  "dependencies": { "astro": "^5.1.1" }
+}

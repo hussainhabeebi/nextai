@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      TEST_REDIS_URL: redis://localhost:6379/1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages
+        run: pnpm turbo run build --filter "./packages/*" --filter @nextai/core
+      - name: Lint
+        run: pnpm lint
+      - name: Format check
+        run: pnpm exec prettier --check "apps/core/src/**/*.ts" "packages/*/src/**/*.ts" || echo "::warning::prettier differences"
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit + integration tests (Postgres RLS, Redis)
+        run: pnpm test
+      - name: Dependency audit
+        run: pnpm audit --prod --audit-level high
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql://nextai_app:nextai_app@localhost:5432/nextai
+      DATABASE_MIGRATE_URL: postgresql://postgres:postgres@localhost:5432/nextai
+      REDIS_URL: redis://localhost:6379/3
+      ADMIN_BOOTSTRAP_PASSWORD: ci-admin-password
+      ENCRYPTION_KEY: CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=
+      LOCAL_STORAGE_DIR: /tmp/nextai-storage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Database
+        run: |
+          psql postgresql://postgres:postgres@localhost:5432/postgres -c "CREATE ROLE nextai_app LOGIN PASSWORD 'nextai_app'" -c "CREATE DATABASE nextai"
+          pnpm --filter @nextai/core exec sh -c 'DATABASE_URL=$DATABASE_MIGRATE_URL prisma migrate deploy'
+          pnpm --filter @nextai/core seed
+      - run: pnpm turbo run build --filter @nextai/web --filter @nextai/core
+      - run: pnpm --filter @nextai/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @nextai/web e2e
+        env: { CI: "1" }
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report, path: apps/web/test-results }
+
+  images:
+    runs-on: ubuntu-latest
+    needs: [check, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        app: [core, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile.${{ matrix.app }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/nextai-${{ matrix.app }}:latest
+            ghcr.io/${{ github.repository_owner }}/nextai-${{ matrix.app }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  landing:
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions: { contents: read, deployments: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile && pnpm --filter @nextai/landing build
+      - name: Deploy to Cloudflare Pages
+        env: { CF_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}" }
+        if: env.CF_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/landing/dist --project-name nextai-landing

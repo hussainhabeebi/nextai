@@ -1,0 +1,68 @@
+# NextAi production stack (runs next to the ERPNext "nextai" project).
+# All ports bind to 127.0.0.1; Cloudflare Tunnel routes:
+#   api.nextaierp.com → http://localhost:8090   app.nextaierp.com → http://localhost:3010
+name: nextai-platform
+
+x-app-env: &app-env
+  env_file: ../.env
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nextai
+      POSTGRES_USER: nextai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      NEXTAI_APP_PASSWORD: ${NEXTAI_APP_PASSWORD:?set NEXTAI_APP_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U nextai"], interval: 10s, retries: 5 }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redisdata:/data]
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, retries: 5 }
+
+  migrate:
+    image: ghcr.io/hussainhabeebi/nextai-core:${TAG:-latest}
+    <<: *app-env
+    restart: "no"
+    command: ["sh", "-c", "DATABASE_URL=$$DATABASE_MIGRATE_URL npx prisma migrate deploy"]
+    depends_on: { postgres: { condition: service_healthy } }
+
+  core:
+    image: ghcr.io/hussainhabeebi/nextai-core:${TAG:-latest}
+    build: { context: .., dockerfile: infra/Dockerfile.core }
+    <<: *app-env
+    ports: ["127.0.0.1:8090:8090"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    image: ghcr.io/hussainhabeebi/nextai-worker:${TAG:-latest}
+    build: { context: .., dockerfile: infra/Dockerfile.worker }
+    <<: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    image: ghcr.io/hussainhabeebi/nextai-web:${TAG:-latest}
+    build: { context: .., dockerfile: infra/Dockerfile.web, args: { NEXT_PUBLIC_API_URL: https://api.nextaierp.com } }
+    restart: unless-stopped
+    ports: ["127.0.0.1:3010:3010"]
+    depends_on: [core]
+
+volumes:
+  pgdata:
+  redisdata:

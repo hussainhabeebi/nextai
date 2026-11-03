@@ -1,10 +1,42 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
-    "typecheck": { "dependsOn": ["^build"] },
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
     "lint": {},
-    "test": { "dependsOn": ["^build"] },
-    "dev": { "cache": false, "persistent": true }
-  }
+    "test": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  },
+  "globalPassThroughEnv": [
+    "TEST_DATABASE_URL",
+    "TEST_REDIS_URL",
+    "DATABASE_URL",
+    "DATABASE_MIGRATE_URL",
+    "REDIS_URL",
+    "CI",
+    "PW_CHROMIUM_PATH",
+    "NEXT_PUBLIC_API_URL",
+    "LOCAL_STORAGE_DIR",
+    "ENCRYPTION_KEY"
+  ]
 }

@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+FROM node:20-bookworm-slim AS base
+RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /repo
+
+FROM base AS build
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/core ./apps/core
+COPY apps/worker ./apps/worker
+RUN pnpm install --frozen-lockfile --filter @nextai/worker... \
+ && pnpm --filter "@nextai/worker^..." build && pnpm --filter @nextai/worker build \
+ && pnpm deploy --filter @nextai/worker --prod --legacy /out \
+ && cp -r apps/core/prisma /out/prisma && cd /out && npx prisma generate --schema prisma/schema.prisma
+
+FROM base AS runtime
+ENV NODE_ENV=production SERVICE_NAME=worker
+WORKDIR /app
+COPY --from=build /out ./
+USER node
+CMD ["node", "dist/index.js"]

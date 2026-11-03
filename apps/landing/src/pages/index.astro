@@ -1,0 +1,158 @@
+---
+import Base from '../layouts/Base.astro';
+import Mark from '../components/Mark.astro';
+
+const APP = 'https://app.nextaierp.com';
+const WA = 'https://wa.me/971000000000?text=Hi%20NextAi'; // TODO: set the sales WhatsApp number
+const plans = [
+  { code: 'starter', name: 'Starter', inr: 999, aed: 49, items: ['100 bills read / month', '50 WhatsApp invoices', '2 team members', 'Daily summary & reminders'] },
+  { code: 'business', name: 'Business', inr: 2499, aed: 129, items: ['500 bills read / month', '300 WhatsApp invoices', '5 team members', 'Tax centre (GST / VAT)', 'Ask your books'], popular: true },
+  { code: 'pro', name: 'Pro', inr: 5999, aed: 299, items: ['2,000 bills read / month', '2,000 WhatsApp invoices', '15 team members', 'Multi-currency', 'API access'] },
+];
+const steps = [
+  { t: 'Snap or speak', d: 'Send a bill photo, PDF or a voice note on WhatsApp — in English, Malayalam or Arabic.' },
+  { t: 'We record it', d: 'NextAi reads it, checks the maths and tax IDs, and prepares the entry. Reply 1 to confirm.' },
+  { t: 'Books stay current', d: 'Invoices go to your customers, reminders go out on time, and you see everything in the app.' },
+];
+const features = [
+  ['🧾', 'Bills & expenses', 'Purchase bills, cash expenses and receipts recorded with GST/VAT split and supplier matching.'],
+  ['📤', 'Invoices on WhatsApp', 'Create an invoice in a sentence; the PDF reaches your customer on WhatsApp.'],
+  ['⏰', 'Payment reminders', 'Polite, scheduled reminders for overdue invoices — and receipts when they pay.'],
+  ['📊', 'Live dashboard', 'Cash & bank, receivables, payables, profit this month and tax due — in your pocket.'],
+  ['🧑‍💼', 'A real accountant', 'Anything unclear is checked by a human accountant before it reaches your books.'],
+  ['🔒', 'Private by design', 'Each business has its own isolated books, encrypted credentials and audit trail.'],
+];
+---
+<Base title="NextAi — your accountant on WhatsApp">
+  <header class="wrap nav">
+    <a href="/" class="logo" aria-label="NextAi home"><Mark class="mark" /><span class="brand"><span class="next">Next</span><span class="ai">Ai</span></span></a>
+    <nav class="links"><a href="#how">How it works</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a><a class="btn btn-ghost" href={APP}>Log in</a></nav>
+  </header>
+
+  <main>
+    <section class="wrap hero">
+      <div>
+        <p class="pill">🇮🇳 GST · 🇦🇪 VAT &amp; Corporate Tax</p>
+        <h1>Your accountant <span class="next">lives in</span> <span class="ai">WhatsApp</span>.</h1>
+        <p class="lead muted">Send bills, voice notes and instructions. NextAi keeps your books, sends invoices, chases payments and shows you the numbers — reviewed by a real accountant.</p>
+        <div class="cta">
+          <a class="btn btn-amber" href={WA}>Start free on WhatsApp</a>
+          <a class="btn btn-ghost" href="#pricing">See pricing</a>
+        </div>
+        <p class="muted small">14-day free trial · No card needed to start</p>
+      </div>
+      <div class="phone" aria-hidden="true">
+        <div class="bubble in">📷 <em>bill.jpg</em></div>
+        <div class="bubble out">🧾 Purchase bill<br />Supplier: Kerala Paper Mart<br />Total: ₹2,950.00<br /><br />Reply 1 Confirm · 2 Edit · 3 Cancel</div>
+        <div class="bubble in">1</div>
+        <div class="bubble out">Posted ✅ PINV-0042</div>
+        <div class="bubble in">Ravi paid 2000</div>
+        <div class="bubble out">💰 Payment received from Ravi Traders · ₹2,000.00 — receipt sent.</div>
+      </div>
+    </section>
+
+    <section id="how" class="wrap section">
+      <h2>How it works</h2>
+      <ol class="grid3 steps">
+        {steps.map((s, i) => <li class="card"><span class="num">{i + 1}</span><h3>{s.t}</h3><p class="muted">{s.d}</p></li>)}
+      </ol>
+    </section>
+
+    <section class="wrap section">
+      <h2>Everything a small business needs</h2>
+      <div class="grid3">
+        {features.map(([icon, t, d]) => <div class="card"><div class="icon">{icon}</div><h3>{t}</h3><p class="muted">{d}</p></div>)}
+      </div>
+    </section>
+
+    <section id="pricing" class="wrap section">
+      <h2>Simple monthly pricing</h2>
+      <div class="toggle" role="tablist" aria-label="Currency">
+        <button role="tab" aria-selected="true" data-cur="inr">India (₹)</button>
+        <button role="tab" aria-selected="false" data-cur="aed">UAE (AED)</button>
+      </div>
+      <div class="grid3">
+        {plans.map((p) => (
+          <div class={`card plan ${p.popular ? 'popular' : ''}`}>
+            {p.popular && <span class="badge">Most popular</span>}
+            <h3>{p.name}</h3>
+            <p class="price"><span data-inr>₹{p.inr.toLocaleString('en-IN')}</span><span data-aed hidden>AED {p.aed}</span><small class="muted">/month</small></p>
+            <ul>{p.items.map((i) => <li>✓ {i}</li>)}</ul>
+            <a class={`btn ${p.popular ? 'btn-amber' : 'btn-primary'}`} href={WA}>Start free trial</a>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section id="faq" class="wrap section faq">
+      <h2>Questions</h2>
+      <details class="card"><summary>Do I need to learn accounting software?</summary><p class="muted">No. You only use WhatsApp and, if you like, our mobile app. Your books are kept in a professional accounting system that we run for you.</p></details>
+      <details class="card"><summary>Is my data safe?</summary><p class="muted">Every business has its own isolated books. Credentials are encrypted, files are private with expiring links, and every change is logged.</p></details>
+      <details class="card"><summary>Which taxes do you support?</summary><p class="muted">India GST (CGST/SGST/IGST, GSTR summaries) and UAE VAT and Corporate Tax summaries, with due-date reminders.</p></details>
+      <details class="card"><summary>What happens if the AI is unsure?</summary><p class="muted">It never guesses silently. Unclear bills go to a human accountant, who checks and posts them or asks you on WhatsApp.</p></details>
+    </section>
+
+    <section class="wrap section final card">
+      <img src="/logo-stacked.svg" alt="NextAi" width="160" height="120" />
+      <h2>Close your books from your phone.</h2>
+      <a class="btn btn-amber" href={WA}>Say hi on WhatsApp</a>
+    </section>
+  </main>
+
+  <footer class="wrap foot muted">
+    <span>© {new Date().getFullYear()} NextAi · Aiingo Technologies</span>
+    <nav><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href={APP}>App</a></nav>
+  </footer>
+
+  <script>
+    document.querySelectorAll<HTMLButtonElement>('.toggle button').forEach((b) =>
+      b.addEventListener('click', () => {
+        const cur = b.dataset.cur!;
+        document.querySelectorAll('.toggle button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+        document.querySelectorAll<HTMLElement>('[data-inr]').forEach((e) => (e.hidden = cur !== 'inr'));
+        document.querySelectorAll<HTMLElement>('[data-aed]').forEach((e) => (e.hidden = cur !== 'aed'));
+      }),
+    );
+  </script>
+</Base>
+
+<style>
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
+  .logo { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-size: 26px; }
+  .mark { width: 38px; height: 38px; }
+  .links { display: flex; align-items: center; gap: 20px; font-size: 15px; }
+  .links a:not(.btn) { text-decoration: none; }
+  @media (max-width: 720px) { .links a:not(.btn) { display: none; } }
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding-top: 40px; padding-bottom: 64px; }
+  @media (max-width: 860px) { .hero { grid-template-columns: 1fr; } }
+  .hero h1 { font-size: clamp(36px, 6vw, 60px); margin: 12px 0; }
+  .lead { font-size: 19px; max-width: 34em; }
+  .pill { display: inline-block; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
+  .small { font-size: 14px; }
+  .phone { background: #E7F1EE; border-radius: 32px; padding: 24px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 20px 60px rgba(14, 122, 107, 0.18); max-width: 380px; justify-self: center; width: 100%; }
+  @media (prefers-color-scheme: dark) { .phone { background: #10211E; } }
+  .bubble { max-width: 85%; padding: 10px 14px; border-radius: 16px; font-size: 14px; }
+  .bubble.in { align-self: flex-end; background: #D9FDD3; color: #111; border-bottom-right-radius: 4px; }
+  .bubble.out { align-self: flex-start; background: #fff; color: #111; border-bottom-left-radius: 4px; }
+  .section { padding: 48px 20px; }
+  .section h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 24px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 0; list-style: none; }
+  @media (max-width: 860px) { .grid3 { grid-template-columns: 1fr; } }
+  .num { display: inline-flex; width: 36px; height: 36px; border-radius: 50%; background: var(--teal); color: #fff; align-items: center; justify-content: center; font-weight: 700; }
+  .icon { font-size: 28px; }
+  .toggle { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px; margin-bottom: 20px; }
+  .toggle button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 9px; background: transparent; font: inherit; color: inherit; cursor: pointer; }
+  .toggle button[aria-selected='true'] { background: var(--teal); color: #fff; }
+  .plan { display: flex; flex-direction: column; gap: 8px; position: relative; }
+  .plan ul { list-style: none; padding: 0; margin: 8px 0 16px; flex: 1; }
+  .plan li { padding: 4px 0; }
+  .popular { border: 2px solid var(--amber); }
+  .badge { position: absolute; top: -12px; right: 20px; background: var(--amber); color: #111; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+  .price { font-size: 34px; font-weight: 700; margin: 0; }
+  .price small { font-size: 15px; font-weight: 400; }
+  .faq details { margin-bottom: 12px; }
+  .faq summary { cursor: pointer; font-weight: 600; min-height: 24px; }
+  .final { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 48px; }
+  .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 24px 20px 40px; font-size: 14px; border-top: 1px solid var(--line); }
+</style>
