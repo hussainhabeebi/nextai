@@ -10,7 +10,7 @@ apps/
   core/      Fastify API (api.nextaierp.com) — webhooks, /v1 app API, /admin/v1, Prisma + RLS
   worker/    BullMQ workers — OCR, voice, posting, outbound WhatsApp, schedulers
   web/       Next.js 15 — customer PWA (/) and admin console (/admin)
-  landing/   Astro static site (nextaierp.com, Cloudflare Pages)
+  landing/   Astro + Tailwind marketing site (nextaierp.com, Cloudflare Pages) — see apps/landing/README.md
 packages/
   shared/            types, Zod schemas, constants, i18n (en, ml, ar), money/tax helpers, brand tokens
   erpnext-client/    typed Frappe REST client + in-memory test double
@@ -77,7 +77,7 @@ pnpm dev
 - API: http://localhost:8090 (OpenAPI UI at `/docs` outside production)
 - App: http://localhost:3010 — log in with `+919999999999`; in development the OTP is pre-filled
 - Admin: http://localhost:3010/admin — first login enrols TOTP 2FA
-- Landing: `pnpm --filter @nextai/landing dev` → http://localhost:4321
+- Landing: `pnpm --filter @nextai/landing dev` → http://localhost:4321 (configure via `apps/landing/.env.example`)
 
 Without R2 credentials, files are stored under `$TMPDIR/nextai-storage` (or `LOCAL_STORAGE_DIR`) and served via
 HMAC-signed, expiring URLs, so the API and worker share uploads.
@@ -121,7 +121,7 @@ pnpm --filter @nextai/web build && pnpm --filter @nextai/web e2e
 STRIPE_SECRET_KEY=sk_... DATABASE_MIGRATE_URL=... pnpm --filter @nextai/core exec tsx scripts/stripe-setup.ts
 ```
 
-Creates Starter / Business / Pro monthly prices in INR and AED and stores them on each plan. Point a Stripe
+Creates Base / Growth / Pro monthly prices in INR and AED and stores them on each plan. Point a Stripe
 webhook at `https://api.nextaierp.com/webhooks/stripe` (events: `checkout.session.completed`,
 `customer.subscription.*`, `invoice.paid`, `invoice.payment_failed`) and set `STRIPE_WEBHOOK_SECRET`.
 
@@ -129,7 +129,12 @@ webhook at `https://api.nextaierp.com/webhooks/stripe` (events: `checkout.sessio
 
 `infra/docker-compose.yml` runs postgres, redis, a one-shot `migrate`, core (127.0.0.1:8090), worker and
 web (127.0.0.1:3010). Cloudflare Tunnel routes `api.nextaierp.com → localhost:8090` and
-`app.nextaierp.com → localhost:3010`; the landing page deploys to Cloudflare Pages. GitHub Actions
+`app.nextaierp.com → localhost:3010`.
+
+The landing page deploys to Cloudflare Pages from `main`. Because the repo is now a monorepo, set the
+Pages project's **root directory to `apps/landing`** (build command `npm run build` or
+`pnpm --filter @nextai/landing build`, output `dist`, `NODE_VERSION=22`), or let the CI `landing` job deploy
+it with `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`. GitHub Actions
 (`.github/workflows/ci.yml`) runs lint, typecheck, tests (Postgres + Redis services), dependency audit and
 Playwright e2e, then builds and pushes images to GHCR on `main`.
 
@@ -148,3 +153,7 @@ Health: `GET /healthz` (liveness), `GET /readyz` (Postgres + Redis).
 - WebAuthn sign-in and web-push sending are not implemented yet (push subscriptions are stored).
 - Multi-page captures from the app are processed as separate documents.
 - Razorpay provider is a stub. Legal pages on the landing site are placeholders.
+- The landing signup form posts to `PUBLIC_SIGNUP_ENDPOINT` (default `https://api.nextaierp.com/v1/signup`); that
+  self-signup endpoint is not implemented in core yet — tenants are created via the admin provisioning wizard.
+- Plans follow the published UAE pricing (Base AED 99 / 1 user, Growth AED 299 / 4 users, Pro AED 599 / 10 users);
+  INR prices are placeholders until India pricing is confirmed.

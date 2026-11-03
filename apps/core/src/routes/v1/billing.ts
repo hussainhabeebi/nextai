@@ -1,4 +1,4 @@
-import { planLimitsSchema } from '@nextai/shared';
+import { PLAN_CODES, planLimitsSchema } from '@nextai/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Container } from '../../container.js';
@@ -37,7 +37,7 @@ export const billingRoutes =
       };
     });
 
-    app.post('/billing/checkout', { schema: { tags: ['billing'], body: z.object({ plan: z.enum(['starter', 'business', 'pro']) }) } }, async (req) => {
+    app.post('/billing/checkout', { schema: { tags: ['billing'], body: z.object({ plan: z.enum(PLAN_CODES) }) } }, async (req) => {
       if (req.user!.role !== 'owner') throw forbidden('Only the owner can change the plan');
       const owner = await req.db!.user.findUnique({ where: { id: req.user!.sub } });
       const r = await startCheckout(c, req.tenant!, req.body.plan, owner?.email ?? undefined);

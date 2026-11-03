@@ -20,7 +20,7 @@ const STEPS: Array<{ key: string; label: string }> = [
 type StepState = { status: 'idle' | 'running' | 'done' | 'manual' | 'failed'; note?: string };
 
 export default function Provision() {
-  const [form, setForm] = useState({ name: '', slug: '', country: 'IN', currency: 'INR', language: 'en', planCode: 'starter', ownerName: '', ownerPhone: '', ownerEmail: '' });
+  const [form, setForm] = useState({ name: '', slug: '', country: 'IN', currency: 'INR', language: 'en', planCode: 'base', ownerName: '', ownerPhone: '', ownerEmail: '' });
   const [cw, setCw] = useState({ accountId: '', inboxId: '', botToken: '' });
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [steps, setSteps] = useState<Record<string, StepState>>({});
@@ -67,7 +67,7 @@ export default function Provision() {
           </Field>
           <Field label="Currency"><Input {...f('currency')} /></Field>
           <Field label="Language"><Select {...f('language')}><option value="en">English</option><option value="ml">Malayalam</option><option value="ar">Arabic</option></Select></Field>
-          <Field label="Plan"><Select {...f('planCode')}><option value="starter">Starter</option><option value="business">Business</option><option value="pro">Pro</option></Select></Field>
+          <Field label="Plan"><Select {...f('planCode')}><option value="base">Base</option><option value="growth">Growth</option><option value="pro">Pro</option></Select></Field>
           <Field label="Owner name"><Input {...f('ownerName')} required /></Field>
           <Field label="Owner WhatsApp"><Input {...f('ownerPhone')} required /></Field>
           <Field label="Owner email (optional)"><Input type="email" {...f('ownerEmail')} /></Field>

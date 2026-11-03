@@ -1,5 +1,5 @@
 /**
- * Creates (idempotently, via lookup_key) Stripe Products + monthly Prices for Starter/Business/Pro
+ * Creates (idempotently, via lookup_key) Stripe Products + monthly Prices for Base/Growth/Pro
  * in INR and AED and stores the price ids in Plan.providerPriceIds.stripe.{INR,AED}.
  *   STRIPE_SECRET_KEY=sk_... DATABASE_MIGRATE_URL=... pnpm --filter @nextai/core exec tsx scripts/stripe-setup.ts
  */

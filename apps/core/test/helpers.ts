@@ -62,7 +62,7 @@ export async function createTenant(
   const slug = over.slug ?? `t-${Math.random().toString(36).slice(2, 8)}`;
   const cwInboxId = ++inbox + Math.floor(Math.random() * 100000);
   return withSystemTx(prisma, async (tx) => {
-    const plan = await tx.plan.findUnique({ where: { code: 'business' } });
+    const plan = await tx.plan.findUnique({ where: { code: 'growth' } });
     const t = await tx.tenant.create({
       data: {
         name: over.name ?? `Tenant ${slug}`,

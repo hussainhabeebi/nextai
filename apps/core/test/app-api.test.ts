@@ -82,12 +82,12 @@ describe('customer app API', () => {
     const inv = await app.inject({ method: 'POST', url: '/v1/invoices', headers: auth(tokA), payload: { customer: 'Acme', customerPhone: '9847000000', lines: [{ description: 'Design', qty: 2, rate: 1500 }] } });
     expect(inv.statusCode).toBe(201);
     expect(inv.json().status).toBe('confirmed');
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       const r = await app.inject({ method: 'POST', url: '/v1/team', headers: auth(tokA), payload: { name: `S${i}`, phone: `98470000${10 + i}`, role: 'staff' } });
       expect(r.statusCode).toBe(201);
     }
     const over = await app.inject({ method: 'POST', url: '/v1/team', headers: auth(tokA), payload: { name: 'S9', phone: '9847000099', role: 'staff' } });
-    expect(over.statusCode).toBe(402); // business plan: 5 users
+    expect(over.statusCode).toBe(402); // growth plan: 4 users
   });
 
   it('suspended tenants are read-only', async () => {

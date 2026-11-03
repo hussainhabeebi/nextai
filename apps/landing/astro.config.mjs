@@ -1,4 +1,4 @@
 import { defineConfig } from 'astro/config';
-
-// Static build for Cloudflare Pages (output: dist/).
-export default defineConfig({ site: 'https://nextaierp.com', output: 'static', compressHTML: true });
+import tailwindcss from '@tailwindcss/vite';
+import sitemap from '@astrojs/sitemap';
+export default defineConfig({site:'https://nextaierp.com',integrations:[sitemap()],vite:{plugins:[tailwindcss()],server:{allowedHosts:["terminal.local"]}}});

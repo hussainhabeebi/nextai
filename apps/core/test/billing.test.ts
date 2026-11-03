@@ -87,7 +87,7 @@ describe('Stripe billing', () => {
 
 describe('plan gating on WhatsApp', () => {
   it('blocks bill scanning beyond the monthly OCR page limit', async () => {
-    const G = await createTenant(c.prisma); // business plan: 500 pages
+    const G = await createTenant(c.prisma); // growth plan: 500 pages
     await incrementUsage(c.prisma, G.tenant.id, { ocrPages: 500 });
     c.chatwoot(G.tenant);
     const url = 'https://app.aiingo.com/rails/active_storage/over.jpg';

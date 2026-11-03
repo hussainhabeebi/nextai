@@ -1,5 +1,5 @@
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
-import { QUEUES, draftPayloadSchema, planLimitsSchema, t, tenantCreateSchema, type DraftPayload, type Language } from '@nextai/shared';
+import { PLAN_CODES, QUEUES, draftPayloadSchema, planLimitsSchema, t, tenantCreateSchema, type DraftPayload, type Language } from '@nextai/shared';
 import type { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import type { FastifyRequest } from 'fastify';
@@ -118,7 +118,7 @@ export const platformRoutes =
 
     app.patch(
       '/tenants/:id/settings',
-      { ...superOnly, schema: { tags: ['admin'], params: uuidParam, body: z.object({ settings: z.record(z.unknown()), planCode: z.enum(['starter', 'business', 'pro']).optional() }) } },
+      { ...superOnly, schema: { tags: ['admin'], params: uuidParam, body: z.object({ settings: z.record(z.unknown()), planCode: z.enum(PLAN_CODES).optional() }) } },
       async (req) => {
         const before = await sys((tx) => tx.tenant.findUniqueOrThrow({ where: { id: req.params.id } }));
         const plan = req.body.planCode ? await c.prisma.plan.findUnique({ where: { code: req.body.planCode } }) : null;
@@ -246,7 +246,7 @@ export const platformRoutes =
     app.get('/plans', { ...anyAdmin, schema: { tags: ['admin'] } }, async () => ({ items: await c.prisma.plan.findMany({ orderBy: { code: 'asc' } }) }));
     app.patch(
       '/plans/:code',
-      { ...superOnly, schema: { tags: ['admin'], params: z.object({ code: z.enum(['starter', 'business', 'pro']) }), body: z.object({ name: z.string().optional(), priceMonthly: z.record(z.number()).optional(), limits: planLimitsSchema.optional(), providerPriceIds: z.record(z.record(z.string())).optional(), active: z.boolean().optional() }) } },
+      { ...superOnly, schema: { tags: ['admin'], params: z.object({ code: z.enum(PLAN_CODES) }), body: z.object({ name: z.string().optional(), priceMonthly: z.record(z.number()).optional(), limits: planLimitsSchema.optional(), providerPriceIds: z.record(z.record(z.string())).optional(), active: z.boolean().optional() }) } },
       async (req) => {
         const before = await c.prisma.plan.findUniqueOrThrow({ where: { code: req.params.code } });
         const after = await c.prisma.plan.update({ where: { code: req.params.code }, data: req.body });

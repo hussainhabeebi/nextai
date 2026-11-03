@@ -1,24 +1,28 @@
-import type { PlanLimits } from '@nextai/shared';
+import type { PlanCode, PlanLimits } from '@nextai/shared';
 
-export const DEFAULT_PLANS: Array<{ code: 'starter' | 'business' | 'pro'; name: string; priceMonthly: Record<string, number>; limits: PlanLimits }> = [
+/**
+ * Plans as published on nextaierp.com (UAE monthly pricing: Base AED 99 / 1 user, Growth AED 299 /
+ * 4 users, Pro AED 599 / 10 users). INR prices are placeholders until India pricing is confirmed.
+ */
+export const DEFAULT_PLANS: Array<{ code: PlanCode; name: string; priceMonthly: Record<string, number>; limits: PlanLimits }> = [
   {
-    code: 'starter',
-    name: 'Starter',
-    priceMonthly: { INR: 999, AED: 49 },
-    limits: { users: 2, ocrPagesPerMonth: 100, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: [] },
+    code: 'base',
+    name: 'Base',
+    priceMonthly: { AED: 99, INR: 999 },
+    limits: { users: 1, ocrPagesPerMonth: 100, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: [] },
   },
   {
-    code: 'business',
-    name: 'Business',
-    priceMonthly: { INR: 2499, AED: 129 },
-    limits: { users: 5, ocrPagesPerMonth: 500, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books'] },
+    code: 'growth',
+    name: 'Growth',
+    priceMonthly: { AED: 299, INR: 2499 },
+    limits: { users: 4, ocrPagesPerMonth: 500, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books'] },
   },
   {
     code: 'pro',
     name: 'Pro',
-    priceMonthly: { INR: 5999, AED: 299 },
+    priceMonthly: { AED: 599, INR: 5999 },
     limits: {
-      users: 15,
+      users: 10,
       ocrPagesPerMonth: 2000,
       invoicesSentPerMonth: 2000,
       messagesPerMonth: 20000,

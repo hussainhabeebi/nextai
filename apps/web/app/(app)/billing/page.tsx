@@ -65,7 +65,7 @@ export default function BillingPage() {
               {p.features.map((f) => <li key={f}><Check className="me-1 inline h-4 w-4 text-brand" />{f.replace('_', ' ')}</li>)}
             </ul>
             {p.code !== b.plan?.code || !b.subscription ? (
-              <Button className="mt-3 w-full" variant={p.code === 'business' ? 'amber' : 'primary'} onClick={() => void go('/v1/billing/checkout', { plan: p.code })}>
+              <Button className="mt-3 w-full" variant={p.code === 'growth' ? 'amber' : 'primary'} onClick={() => void go('/v1/billing/checkout', { plan: p.code })}>
                 {b.subscription ? 'Switch' : 'Choose'} {p.name}
               </Button>
             ) : null}

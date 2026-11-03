@@ -17,7 +17,7 @@ export async function seed(prisma: PrismaClient, opts: { ownerPhone?: string; ad
     for (const t of DEFAULT_TEMPLATES) {
       await tx.messageTemplate.upsert({ where: { key_language: { key: t.key, language: t.language } }, update: t, create: t });
     }
-    const business = await tx.plan.findUniqueOrThrow({ where: { code: 'business' } });
+    const business = await tx.plan.findUniqueOrThrow({ where: { code: 'growth' } });
     const tenant = await tx.tenant.upsert({
       where: { slug: 'aiingo' },
       update: {},

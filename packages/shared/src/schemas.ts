@@ -168,7 +168,7 @@ export const tenantCreateSchema = z.object({
   country: z.enum(COUNTRIES),
   currency: z.enum(CURRENCIES),
   language: z.enum(LANGUAGES).default('en'),
-  planCode: z.enum(PLAN_CODES).default('starter'),
+  planCode: z.enum(PLAN_CODES).default('base'),
   ownerPhone: z.string().min(8).max(20),
   ownerName: z.string().min(1),
   ownerEmail: z.string().email().optional(),

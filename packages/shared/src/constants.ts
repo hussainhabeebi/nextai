@@ -44,7 +44,7 @@ export const INTENTS = [
 ] as const;
 export type Intent = (typeof INTENTS)[number];
 
-export const PLAN_CODES = ['starter', 'business', 'pro'] as const;
+export const PLAN_CODES = ['base', 'growth', 'pro'] as const;
 export type PlanCode = (typeof PLAN_CODES)[number];
 
 export const FEATURES = ['tax_centre', 'payroll', 'multi_currency', 'api_access', 'ask_books'] as const;

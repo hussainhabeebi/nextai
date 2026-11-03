@@ -1,15 +1,20 @@
 {
   "name": "@nextai/landing",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev --port 4321",
+    "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview",
+    "preview": "astro preview --host 0.0.0.0",
     "typecheck": "astro sync && echo landing ok",
     "lint": "echo 'landing: no lint'",
     "test": "echo 'landing: no tests'"
   },
-  "dependencies": { "astro": "^5.1.1" }
+  "dependencies": {
+    "astro": "^5.15.0",
+    "tailwindcss": "^4.1.0",
+    "@tailwindcss/vite": "^4.1.0",
+    "@astrojs/sitemap": "^3.6.0"
+  }
 }

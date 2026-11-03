@@ -65,8 +65,8 @@ enum DraftStatus {
 }
 
 enum PlanCode {
-  starter
-  business
+  base
+  growth
   pro
 }
 
