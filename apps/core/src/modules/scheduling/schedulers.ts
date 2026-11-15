@@ -39,7 +39,7 @@ export function scheduleReminders(c: Container, at = new Date()) {
 export function scheduleDailySummary(c: Container, at = new Date()) {
   return forEachTenant(c, async (t) => {
     const { settings } = erpContext(t);
-    if (settings.dailySummary.enabled && t.cwBotTokenEnc && localHour(settings.timezone, at) === settings.dailySummary.hourLocal) {
+    if (settings.dailySummary.enabled && (t.cwBotTokenEnc || c.mailer.configured) && localHour(settings.timezone, at) === settings.dailySummary.hourLocal) {
       await sendDailySummary(c, t, at);
     }
   });
@@ -82,4 +82,5 @@ export const SCHEDULE_QUEUES = {
   [QUEUES.usageRollup]: '15 * * * *',
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',
+  [QUEUES.reportAdminDaily]: '10 4 * * *', // 08:10 Dubai / 09:40 India
 } as const;

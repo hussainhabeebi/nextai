@@ -10,6 +10,7 @@ import { BullJobQueue } from './lib/queue.js';
 import { chatwootClientFor } from './modules/chatwoot/factory.js';
 import { erpClientFor } from './modules/erpnext/factory.js';
 import { FakeProvisionerClient, HttpProvisionerClient } from './modules/provisioning/provisioner-client.js';
+import { MemoryMailer, ResendMailer } from './modules/email/mailer.js';
 import { RedisConversationStore } from './state/conversation.js';
 import { createRedis } from './state/redis.js';
 import { LocalFsStorage, R2Storage } from './storage/storage.js';
@@ -41,6 +42,7 @@ export function createContainer(): Container & { close: () => Promise<void> } {
     payments:
       e.STRIPE_SECRET_KEY && e.STRIPE_WEBHOOK_SECRET ? new StripeProvider(e.STRIPE_SECRET_KEY, e.STRIPE_WEBHOOK_SECRET) : new FakePaymentProvider(),
     provisioner: e.PROVISIONER_URL && e.PROVISIONER_SECRET ? new HttpProvisionerClient(e.PROVISIONER_URL, e.PROVISIONER_SECRET) : new FakeProvisionerClient(),
+    mailer: e.RESEND_API_KEY ? new ResendMailer(e.RESEND_API_KEY, e.MAIL_FROM) : new MemoryMailer(e.MAIL_FROM, false),
     close: async () => {
       await queue.close();
       redis.disconnect();

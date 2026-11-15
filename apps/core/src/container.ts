@@ -8,6 +8,7 @@ import type { ConversationStore } from './state/conversation.js';
 import type { ObjectStorage } from './storage/storage.js';
 import type { JobQueue } from './lib/queue.js';
 import type { ProvisionerClient } from './modules/provisioning/provisioner-client.js';
+import type { Mailer } from './modules/email/mailer.js';
 
 /** Everything with side effects lives here so tests can swap in fakes. */
 export interface Container {
@@ -22,4 +23,5 @@ export interface Container {
   chatwoot: (tenant: Tenant) => ChatwootClient;
   payments: PaymentProvider;
   provisioner: ProvisionerClient;
+  mailer: Mailer;
 }
