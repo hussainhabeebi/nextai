@@ -6,6 +6,7 @@ import { processOcr } from '../modules/ocr/pipeline.js';
 import { processVoice } from '../modules/voice/pipeline.js';
 import { sendInvoice, sendReceipt, sendReminder } from '../modules/outbound/jobs.js';
 import { billingSync } from '../modules/billing/service.js';
+import { sendAdminDailyReport } from '../modules/email/reports.js';
 import { healthErpnext, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
 
 const tenantId = z.string().uuid();
@@ -38,5 +39,6 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.usageRollup]: (d) => (fanOut.parse(d), usageRollup(c)),
     [QUEUES.healthErpnext]: (d) => (fanOut.parse(d), healthErpnext(c)),
     [QUEUES.billingSync]: (d) => (fanOut.parse(d), billingSync(c)),
+    [QUEUES.reportAdminDaily]: (d) => (fanOut.parse(d), sendAdminDailyReport(c)),
   };
 }

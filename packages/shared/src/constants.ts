@@ -72,6 +72,7 @@ export const QUEUES = {
   usageRollup: 'usage.rollup',
   billingSync: 'billing.sync',
   healthErpnext: 'health.erpnext',
+  reportAdminDaily: 'report.admin_daily',
   deadLetter: 'dead-letter',
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

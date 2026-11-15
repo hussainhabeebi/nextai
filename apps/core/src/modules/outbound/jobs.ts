@@ -7,6 +7,7 @@ import { erpContext } from '../erpnext/mappers.js';
 import { incrementUsage } from '../usage/usage.js';
 import { sendWhatsApp } from './whatsapp.js';
 import { planLimits, usageFor } from '../billing/gating.js';
+import { emailDailySummary } from '../email/reports.js';
 
 type SI = { name: string; customer: string; grand_total: number; outstanding_amount: number; due_date: string; currency: string; contact_mobile?: string; docstatus: number };
 
@@ -173,8 +174,8 @@ export async function scanReminders(c: Container, tenant: Tenant, at = new Date(
   return invoices.length;
 }
 
-/** Evening WhatsApp summary to owners. Figures come from NextAi-posted drafts + ERPNext balances. */
-export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
+/** Today's figures for the summary. Figures come from NextAi-posted drafts + ERPNext balances. */
+export async function summaryFigures(c: Container, tenant: Tenant, at = new Date()) {
   const { settings, company } = erpContext(tenant);
   const day = localDate(settings.timezone, at);
   const db = tenantDb(c.prisma, tenant.id);
@@ -196,6 +197,20 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
     cash: formatMoney(cash, cur),
     pending: String(pending),
   };
+  return { day, vars };
+}
+
+/** Evening summary to owners: email (Resend) and WhatsApp (Chatwoot). */
+export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
+  const { day, vars } = await summaryFigures(c, tenant, at);
+  const db = tenantDb(c.prisma, tenant.id);
+  // Email (Resend) first so a WhatsApp failure never blocks it, and vice versa.
+  try {
+    await emailDailySummary(c, tenant, day, vars);
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'summary email failed');
+  }
+  if (!tenant.cwBotTokenEnc) return vars;
   const owners = await db.user.findMany({ where: { role: 'owner', status: 'active', phone: { not: null } } });
   for (const o of owners) {
     await sendWhatsApp(c, tenant, {

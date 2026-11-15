@@ -92,6 +92,9 @@ export class ApiClient {
   patch<T>(path: string, json: unknown) {
     return this.request<T>(path, { method: 'PATCH', json });
   }
+  put<T>(path: string, json: unknown) {
+    return this.request<T>(path, { method: 'PUT', json });
+  }
 }
 
 export const api = new ApiClient('/v1/auth');

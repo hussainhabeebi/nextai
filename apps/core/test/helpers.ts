@@ -10,6 +10,7 @@ import { createPrisma, withSystemTx } from '../src/lib/db.js';
 import { MemoryJobQueue } from '../src/lib/queue.js';
 import { FakeProvisionerClient } from '../src/modules/provisioning/provisioner-client.js';
 import { sealCwBotToken, sealErpKey, sealErpSecret } from '../src/modules/tenants/secrets.js';
+import { MemoryMailer } from '../src/modules/email/mailer.js';
 import { MemoryConversationStore } from '../src/state/conversation.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 
@@ -19,6 +20,7 @@ export interface TestContainer extends Container {
   conversations: MemoryConversationStore;
   payments: FakePaymentProvider;
   provisioner: FakeProvisionerClient;
+  mailer: MemoryMailer;
   erps: Map<string, FakeErpClient>;
   cws: Map<string, FakeChatwootClient>;
   close(): Promise<void>;
@@ -40,6 +42,7 @@ export function testContainer(): TestContainer {
     chatwoot: (t: Tenant) => cws.get(t.id) ?? cws.set(t.id, new FakeChatwootClient()).get(t.id)!,
     payments: new FakePaymentProvider(),
     provisioner: new FakeProvisionerClient(),
+    mailer: new MemoryMailer(),
     erps,
     cws,
     close: async () => {},
