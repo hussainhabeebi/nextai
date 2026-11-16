@@ -13,6 +13,8 @@ export const chatwootWebhook =
     app.post('/chatwoot', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
       const e = env();
       if (e.CHATWOOT_ALLOWED_IPS.length > 0 ? !ipAllowed(req.ip, e.CHATWOOT_ALLOWED_IPS) : isProd()) {
+        // Logged so the right value for CHATWOOT_ALLOWED_IPS can be read from the core logs.
+        req.log.warn({ ip: req.ip, forwardedFor: req.headers['x-forwarded-for'] }, 'chatwoot webhook rejected: ip not in CHATWOOT_ALLOWED_IPS');
         return reply.code(403).send({ error: 'forbidden' });
       }
       const ok = verifyChatwoot({
