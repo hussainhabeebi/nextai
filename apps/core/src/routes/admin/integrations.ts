@@ -184,7 +184,8 @@ export const integrationRoutes =
         const fy = await upstream(() => erp.list('Fiscal Year', { fields: ['name'], limit: 1 }));
         if (fy.length === 0) warnings.push('No Fiscal Year found: entries will be rejected until one exists');
 
-        const settings = tenantSettingsSchema.parse({ ...((tenant.settings ?? {}) as object), erpCompany: chosen.name, companyAbbr: chosen.abbr });
+        // Merge, don't re-parse: the settings schema strips unknown keys such as provisioning progress.
+        const settings = { ...((tenant.settings ?? {}) as object), erpCompany: chosen.name, companyAbbr: chosen.abbr };
         await sys((tx) =>
           tx.tenant.update({
             where: { id: tenant.id },
