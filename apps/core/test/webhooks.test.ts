@@ -7,6 +7,7 @@ import { tenantDb, withSystemTx } from '../src/lib/db.js';
 import { sealErpWebhookSecret } from '../src/modules/tenants/secrets.js';
 import { closeShared, createTenant, testContainer } from './helpers.js';
 import { readWebhookTraces } from '../src/modules/chatwoot/diagnostics.js';
+import { clientIp, isCloudflareEdge } from '../src/lib/client-ip.js';
 import { cwMessage, postCw } from './webhook-helpers.js';
 import { ipAllowed } from '../src/modules/webhooks/verify.js';
 
@@ -55,6 +56,17 @@ describe('chatwoot webhook', () => {
     expect(traces.accepted).toMatchObject({ result: 'accepted', inboxId: A.tenant.cwInboxId, detail: A.tenant.name });
     // and the sender's 24h window is open, so replies go as plain text
     expect(await c.redis.exists(`wa:window:${A.tenant.id}:${A.owner.phone}`)).toBe(1);
+  });
+
+  it('behind the Cloudflare proxy, trusts CF-Connecting-IP only from Cloudflare edge addresses', () => {
+    expect(isCloudflareEdge('172.71.202.134')).toBe(true);
+    expect(isCloudflareEdge('2606:4700:10::ac43:1')).toBe(true);
+    expect(isCloudflareEdge('156.67.110.188')).toBe(false);
+    // the real case: Chatwoot → api.nextaierp.com (orange cloud) → origin sees a Cloudflare edge
+    expect(clientIp({ ip: '172.71.202.134', headers: { 'cf-connecting-ip': '156.67.110.188' } })).toBe('156.67.110.188');
+    // a direct call to the origin can't spoof its address with the header
+    expect(clientIp({ ip: '203.0.113.9', headers: { 'cf-connecting-ip': '156.67.110.188' } })).toBe('203.0.113.9');
+    expect(clientIp({ ip: '172.71.202.134', headers: {} })).toBe('172.71.202.134');
   });
 
   it('enforces the source IP allowlist (incl. CIDR)', () => {
