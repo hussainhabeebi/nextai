@@ -2,6 +2,7 @@ import type { Language } from '@nextai/shared';
 import type { Tenant } from '@prisma/client';
 import type { Container } from '../../container.js';
 import { tenantDb } from '../../lib/db.js';
+import { inCustomerWindow } from '../chatwoot/diagnostics.js';
 
 export interface OutboundOptions {
   kind: 'invoice' | 'receipt' | 'reminder' | 'summary' | 'otp' | 'notice';
@@ -40,7 +41,8 @@ export async function sendWhatsApp(c: Container, tenant: Tenant, o: OutboundOpti
         ? existing.conversationId
         : (await cw.createConversation(contact.contactId, contact.sourceId)).conversationId;
     }
-    if (tpl) {
+    // Inside the 24h window plain text always delivers; templates only once approved in Meta.
+    if (tpl && !(await inCustomerWindow(c.redis, tenant.id, o.phone))) {
       await cw.sendTemplate(conversationId, o.fallbackText, { name: tpl.name, language: tpl.language, category: tpl.category, params: o.params });
     } else {
       await cw.sendText(conversationId, o.fallbackText);

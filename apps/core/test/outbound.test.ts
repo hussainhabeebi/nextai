@@ -103,10 +103,19 @@ describe('reminders', () => {
 });
 
 describe('daily summary', () => {
-  it('sends owners an evening summary', async () => {
+  it('sends owners an evening summary: plain text inside the 24h window, the template outside it', async () => {
+    const cw = c.cws.get(A.tenant.id)!;
+    // The owner wrote today (earlier tests), so plain text is allowed and always delivers.
+    const before = cw.sent.length;
+    await sendDailySummary(c, A.tenant);
+    expect(cw.sent.slice(before).some((m) => m.kind === 'text')).toBe(true);
+    expect(cw.sent.slice(before).some((m) => m.kind === 'template')).toBe(false);
+
+    await c.redis.del(`wa:window:${A.tenant.id}:${A.owner.phone}`);
+    await c.redis.del(`summary:${A.tenant.id}:${new Date().toISOString().slice(0, 10)}`);
     const vars = await sendDailySummary(c, A.tenant);
     expect(vars.pending).toBeDefined();
-    const sent = c.cws.get(A.tenant.id)!.sent.filter((m) => m.template?.name === 'nextai_daily_summary');
+    const sent = cw.sent.filter((m) => m.template?.name === 'nextai_daily_summary');
     expect(sent).toHaveLength(1);
     expect(sent[0]!.template!.params[2]).toMatch(/5,05,000/); // cash 25000 + bank 480000 from fake balances
   });

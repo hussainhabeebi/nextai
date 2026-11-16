@@ -26,6 +26,7 @@ type Status = {
     webhookIpAllowlist: string[];
     webhookBlockedInProd: boolean;
     mock: boolean;
+    lastWebhook: { accepted: WebhookTrace | null; rejected: WebhookTrace | null };
   };
   email: { provider: string; configured: boolean; from: string; adminReportRecipients: string[] };
   stripe: { configured: boolean };
@@ -35,6 +36,11 @@ type Status = {
   appUrl: string;
   apiUrl: string;
   tenants: TenantRow[];
+};
+type WebhookTrace = { at: string; result: string; detail?: string; ip?: string; inboxId?: number };
+const ago = (iso: string) => {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : new Date(iso).toLocaleString();
 };
 type Inbox = { id: number; name: string; channelType: string; phoneNumber?: string };
 
@@ -464,6 +470,26 @@ export default function Integrations() {
                   CHATWOOT_ALLOWED_IPS is empty: production rejects all Chatwoot webhooks.
                 </p>
               )}
+              {(() => {
+                const { accepted, rejected } = data.chatwoot.lastWebhook;
+                const rejectedIsNewer = rejected && (!accepted || rejected.at > accepted.at);
+                return (
+                  <>
+                    <p className={accepted ? 'text-emerald-600' : ''}>
+                      Last message received: {accepted ? `${ago(accepted.at)} (inbox ${accepted.inboxId}, ${accepted.detail})` : 'none yet'}
+                    </p>
+                    {rejected && (
+                      <p className={rejectedIsNewer ? 'text-red-600' : ''}>
+                        Last rejected: {ago(rejected.at)}: {rejected.detail ?? rejected.result}
+                        {rejected.ip ? ` (from ${rejected.ip})` : ''}
+                      </p>
+                    )}
+                    {!accepted && !rejected && (
+                      <p>Nothing received from Chatwoot yet: check the inbox&apos;s Agent Bot and its webhook URL in Chatwoot.</p>
+                    )}
+                  </>
+                );
+              })()}
             </Card>
             <Card title="Email (Resend)" ok={data.email.configured}>
               <p>From: {data.email.from}</p>

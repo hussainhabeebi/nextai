@@ -6,6 +6,7 @@ import { buildApp } from '../src/app.js';
 import { tenantDb, withSystemTx } from '../src/lib/db.js';
 import { sealErpWebhookSecret } from '../src/modules/tenants/secrets.js';
 import { closeShared, createTenant, testContainer } from './helpers.js';
+import { readWebhookTraces } from '../src/modules/chatwoot/diagnostics.js';
 import { cwMessage, postCw } from './webhook-helpers.js';
 import { ipAllowed } from '../src/modules/webhooks/verify.js';
 
@@ -37,6 +38,23 @@ describe('chatwoot webhook', () => {
     expect(none.statusCode).toBe(401);
     const tok = await app.inject({ method: 'POST', url: `/webhooks/chatwoot?token=${process.env.CHATWOOT_WEBHOOK_SECRET}`, payload: body, headers: { 'content-type': 'application/json' } });
     expect(tok.statusCode).toBe(200);
+  });
+
+  it('records the last accepted and rejected Chatwoot call for Admin → Integrations', async () => {
+    const body = JSON.stringify(cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, content: 'hi', conversationId: 4242 }));
+    await app.inject({ method: 'POST', url: '/webhooks/chatwoot?token=wrong-token', payload: body, headers: { 'content-type': 'application/json' } });
+    let traces = await readWebhookTraces(c.redis);
+    expect(traces.rejected).toMatchObject({ result: 'bad_token', detail: expect.stringMatching(/does not match CHATWOOT_WEBHOOK_SECRET/) });
+
+    await postCw(app, cwMessage({ inboxId: 999999, phone: A.owner.phone!, content: 'hi', conversationId: 4243 }));
+    traces = await readWebhookTraces(c.redis);
+    expect(traces.rejected).toMatchObject({ result: 'unknown_inbox', inboxId: 999999 });
+
+    await postCw(app, cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, content: 'hi', conversationId: 4244 }));
+    traces = await readWebhookTraces(c.redis);
+    expect(traces.accepted).toMatchObject({ result: 'accepted', inboxId: A.tenant.cwInboxId, detail: A.tenant.name });
+    // and the sender's 24h window is open, so replies go as plain text
+    expect(await c.redis.exists(`wa:window:${A.tenant.id}:${A.owner.phone}`)).toBe(1);
   });
 
   it('enforces the source IP allowlist (incl. CIDR)', () => {

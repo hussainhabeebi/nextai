@@ -20,6 +20,7 @@ import { emailDailySummary, reportRecipients, sendAdminDailyReport } from '../..
 import { summaryFigures } from '../../modules/outbound/jobs.js';
 import { sendWhatsApp } from '../../modules/outbound/whatsapp.js';
 import { runProvisionStep } from '../../modules/provisioning/wizard.js';
+import { readWebhookTraces } from '../../modules/chatwoot/diagnostics.js';
 import { clearAccountCache } from '../../modules/erpnext/mappers.js';
 import { sealErpKey, sealErpSecret } from '../../modules/tenants/secrets.js';
 import { ErpError } from '@nextai/erpnext-client';
@@ -103,6 +104,7 @@ export const integrationRoutes =
           webhookUrl: `${e.API_URL.replace(/\/+$/, '')}/webhooks/chatwoot?token=••••••`,
           webhookIpAllowlist: e.CHATWOOT_ALLOWED_IPS,
           webhookBlockedInProd: e.NODE_ENV === 'production' && e.CHATWOOT_ALLOWED_IPS.length === 0,
+          lastWebhook: await readWebhookTraces(c.redis),
           mock: e.MOCK_EXTERNALS,
         },
         email: {
