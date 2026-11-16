@@ -146,6 +146,25 @@ POSTGRES_PASSWORD=... NEXTAI_APP_PASSWORD=... docker compose -f infra/docker-com
 
 Health: `GET /healthz` (liveness), `GET /readyz` (Postgres + Redis).
 
+### Coolify
+
+`infra/docker-compose.coolify.yml` is a self-contained variant for [Coolify](https://coolify.io) (no `env_file`,
+no bind mounts, no host ports; Coolify's proxy does TLS and routing).
+
+1. Coolify → **New Resource** → this GitHub repo → Build Pack **Docker Compose**.
+   Base directory `/`, Docker Compose location `/infra/docker-compose.coolify.yml`.
+2. **Environment Variables** — required: `POSTGRES_PASSWORD`, `NEXTAI_APP_PASSWORD` (letters and digits only, they
+   go into connection URLs), `ENCRYPTION_KEY`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CHATWOOT_WEBHOOK_SECRET`,
+   `ADMIN_BOOTSTRAP_PASSWORD`. Everything else from `.env.example` is optional and has the same meaning.
+3. **Domains**: `web` → `https://app.nextaierp.com:3010`, `core` → `https://api.nextaierp.com:8090`
+   (the port tells Coolify which container port to route to). In Cloudflare DNS, point `app` and `api` A records
+   at the Coolify server.
+4. Deploy. The one-shot `migrate` service creates the `nextai_app` role, applies migrations and seeds plans,
+   templates, the demo tenant and the super_admin (idempotent; set `SEED_ON_DEPLOY=false` to skip). It shows as
+   "exited" afterwards — that is expected.
+
+Without R2 credentials, uploads go to the shared `uploads` volume (`/data/storage` in core and worker).
+
 ## Known gaps / TODOs
 
 - Speech-to-text adapter: interface + mock only (`AI_STT_PROVIDER=mock`); add a provider supporting en/ml/ar.
