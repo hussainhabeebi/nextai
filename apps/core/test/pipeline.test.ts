@@ -164,6 +164,17 @@ describe('OCR → draft → confirm → post', () => {
     expect(c.cws.get(A.tenant.id)!.lastText(id2)).toMatch(/Sales invoice[\s\S]*Ravi Traders[\s\S]*5,000/);
   });
 
+  it('a foreign-currency expense asks for the amount actually charged, then posts in the business currency', async () => {
+    const id = ++conv;
+    await say('paid 20USD for Google Gemini API Charges from Credit Card date : 15/11/2026', id);
+    expect(c.cws.get(A.tenant.id)!.lastText(id)).toMatch(/amount in INR that was charged for USD 20/);
+    await say('1712.40', id);
+    const draft = (await tenantDb(c.prisma, A.tenant.id).draft.findFirst({ where: { conversationId: id } }))!;
+    const p = draft.payload as { total: number; currency: string; date: string; paymentMode: string; remarks: string };
+    expect(p).toMatchObject({ total: 1712.4, currency: 'INR', date: '2026-11-15', paymentMode: 'card' });
+    expect(p.remarks).toMatch(/google gemini api charges \(USD 20\)/);
+  });
+
   it('voice notes are transcribed and go through the same flow', async () => {
     const id = ++conv;
     const url = 'https://app.aiingo.com/rails/active_storage/voice1.ogg';
