@@ -1,0 +1,218 @@
+# NextAi on Coolify (Docker Compose build pack).
+#
+# Coolify: New Resource → Public/Private Repository → Build Pack "Docker Compose"
+#   Base directory: /     Docker Compose location: /infra/docker-compose.coolify.yml
+# Domains (set per service in Coolify; the :port tells Coolify's proxy which container port to use):
+#   web  → https://app.nextaierp.com:3010
+#   core → https://api.nextaierp.com:8090
+# Every ${VAR} below shows up in Coolify's "Environment Variables" tab. Required ones are marked ":?".
+# POSTGRES_PASSWORD and NEXTAI_APP_PASSWORD go into connection URLs: use letters and digits only.
+# No env_file and no bind mounts on purpose: Coolify only passes variables listed here, and
+# the role/migrate/seed step runs inside the `migrate` image instead of a mounted init script.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nextai
+      POSTGRES_USER: nextai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextai -d nextai"]
+      interval: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  # One-shot: create the RLS runtime role, apply migrations, seed plans/templates/super_admin.
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.core
+      target: tools
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:-https://app.nextaierp.com}
+      API_URL: ${API_URL:-https://api.nextaierp.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.nextaierp.com}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://nextai_app:${NEXTAI_APP_PASSWORD}@postgres:5432/nextai
+      DATABASE_MIGRATE_URL: postgresql://nextai:${POSTGRES_PASSWORD}@postgres:5432/nextai
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+      JWT_SECRET: ${JWT_SECRET:?}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?}
+      CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL:-https://app.aiingo.com}
+      CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:?}
+      CHATWOOT_ALLOWED_IPS: ${CHATWOOT_ALLOWED_IPS:-}
+      CHATWOOT_ATTACHMENT_HOSTS: ${CHATWOOT_ATTACHMENT_HOSTS:-}
+      CHATWOOT_PLATFORM_TOKEN: ${CHATWOOT_PLATFORM_TOKEN:-}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-nextai}
+      AI_VISION_PROVIDER: ${AI_VISION_PROVIDER:-mock}
+      AI_VISION_API_KEY: ${AI_VISION_API_KEY:-}
+      AI_STT_PROVIDER: ${AI_STT_PROVIDER:-mock}
+      AI_STT_API_KEY: ${AI_STT_API_KEY:-}
+      AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-mock}
+      AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
+      AI_ANTHROPIC_MODEL: ${AI_ANTHROPIC_MODEL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      PROVISIONER_URL: ${PROVISIONER_URL:-}
+      PROVISIONER_SECRET: ${PROVISIONER_SECRET:-}
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@nextaierp.com}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      MOCK_EXTERNALS: ${MOCK_EXTERNALS:-false}
+      DOCS_PUBLIC: ${DOCS_PUBLIC:-false}
+      LOCAL_STORAGE_DIR: /data/storage
+      NEXTAI_APP_PASSWORD: ${NEXTAI_APP_PASSWORD:?}
+      SEED_ON_DEPLOY: ${SEED_ON_DEPLOY:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  core:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.core
+    restart: unless-stopped
+    expose:
+      - "8090"
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:-https://app.nextaierp.com}
+      API_URL: ${API_URL:-https://api.nextaierp.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.nextaierp.com}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://nextai_app:${NEXTAI_APP_PASSWORD}@postgres:5432/nextai
+      DATABASE_MIGRATE_URL: postgresql://nextai:${POSTGRES_PASSWORD}@postgres:5432/nextai
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+      JWT_SECRET: ${JWT_SECRET:?}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?}
+      CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL:-https://app.aiingo.com}
+      CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:?}
+      CHATWOOT_ALLOWED_IPS: ${CHATWOOT_ALLOWED_IPS:-}
+      CHATWOOT_ATTACHMENT_HOSTS: ${CHATWOOT_ATTACHMENT_HOSTS:-}
+      CHATWOOT_PLATFORM_TOKEN: ${CHATWOOT_PLATFORM_TOKEN:-}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-nextai}
+      AI_VISION_PROVIDER: ${AI_VISION_PROVIDER:-mock}
+      AI_VISION_API_KEY: ${AI_VISION_API_KEY:-}
+      AI_STT_PROVIDER: ${AI_STT_PROVIDER:-mock}
+      AI_STT_API_KEY: ${AI_STT_API_KEY:-}
+      AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-mock}
+      AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
+      AI_ANTHROPIC_MODEL: ${AI_ANTHROPIC_MODEL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      PROVISIONER_URL: ${PROVISIONER_URL:-}
+      PROVISIONER_SECRET: ${PROVISIONER_SECRET:-}
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@nextaierp.com}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      MOCK_EXTERNALS: ${MOCK_EXTERNALS:-false}
+      DOCS_PUBLIC: ${DOCS_PUBLIC:-false}
+      LOCAL_STORAGE_DIR: /data/storage
+      PORT: 8090
+    volumes:
+      - uploads:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:-https://app.nextaierp.com}
+      API_URL: ${API_URL:-https://api.nextaierp.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.nextaierp.com}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://nextai_app:${NEXTAI_APP_PASSWORD}@postgres:5432/nextai
+      DATABASE_MIGRATE_URL: postgresql://nextai:${POSTGRES_PASSWORD}@postgres:5432/nextai
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+      JWT_SECRET: ${JWT_SECRET:?}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?}
+      CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL:-https://app.aiingo.com}
+      CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:?}
+      CHATWOOT_ALLOWED_IPS: ${CHATWOOT_ALLOWED_IPS:-}
+      CHATWOOT_ATTACHMENT_HOSTS: ${CHATWOOT_ATTACHMENT_HOSTS:-}
+      CHATWOOT_PLATFORM_TOKEN: ${CHATWOOT_PLATFORM_TOKEN:-}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-nextai}
+      AI_VISION_PROVIDER: ${AI_VISION_PROVIDER:-mock}
+      AI_VISION_API_KEY: ${AI_VISION_API_KEY:-}
+      AI_STT_PROVIDER: ${AI_STT_PROVIDER:-mock}
+      AI_STT_API_KEY: ${AI_STT_API_KEY:-}
+      AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-mock}
+      AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
+      AI_ANTHROPIC_MODEL: ${AI_ANTHROPIC_MODEL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      PROVISIONER_URL: ${PROVISIONER_URL:-}
+      PROVISIONER_SECRET: ${PROVISIONER_SECRET:-}
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@nextaierp.com}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      MOCK_EXTERNALS: ${MOCK_EXTERNALS:-false}
+      DOCS_PUBLIC: ${DOCS_PUBLIC:-false}
+      LOCAL_STORAGE_DIR: /data/storage
+      SERVICE_NAME: worker
+    volumes:
+      - uploads:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: ${API_URL:-https://api.nextaierp.com}
+    restart: unless-stopped
+    expose:
+      - "3010"
+    depends_on:
+      - core
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
