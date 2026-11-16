@@ -1,5 +1,7 @@
 # NextAi on Coolify (Docker Compose build pack).
 #
+# Coolify runs this with --project-directory = repo root, so build contexts are relative to the repo root
+# (run it locally the same way: docker compose --project-directory . -f infra/docker-compose.coolify.yml ...).
 # Coolify: New Resource → Public/Private Repository → Build Pack "Docker Compose"
 #   Base directory: /     Docker Compose location: /infra/docker-compose.coolify.yml
 # Domains (set per service in Coolify; the :port tells Coolify's proxy which container port to use):
@@ -39,7 +41,7 @@ services:
   # One-shot: create the RLS runtime role, apply migrations, seed plans/templates/super_admin.
   migrate:
     build:
-      context: ..
+      context: .
       dockerfile: infra/Dockerfile.core
       target: tools
     restart: "no"
@@ -94,7 +96,7 @@ services:
 
   core:
     build:
-      context: ..
+      context: .
       dockerfile: infra/Dockerfile.core
     restart: unless-stopped
     expose:
@@ -155,7 +157,7 @@ services:
 
   worker:
     build:
-      context: ..
+      context: .
       dockerfile: infra/Dockerfile.worker
     restart: unless-stopped
     environment:
@@ -214,7 +216,7 @@ services:
 
   web:
     build:
-      context: ..
+      context: .
       dockerfile: infra/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: ${API_URL:-https://api.nextaierp.com}
