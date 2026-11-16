@@ -38,6 +38,8 @@ export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Langua
     p.taxes && Object.values(p.taxes).some((v) => (v ?? 0) > 0)
       ? `Tax: ${Object.entries(p.taxes).filter(([, v]) => (v ?? 0) > 0).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(', ')}`
       : undefined,
+    (draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && p.expenseAccount ? `Account: ${p.expenseAccount.replace(/\s+-\s+[^-]+$/, '')}` : undefined,
+    p.paymentMode && !['unknown', 'credit'].includes(p.paymentMode) ? `Paid by: ${p.paymentMode}` : undefined,
     p.validationIssues.length ? `⚠️ ${p.validationIssues.join('; ')}` : undefined,
   ]
     .filter(Boolean)

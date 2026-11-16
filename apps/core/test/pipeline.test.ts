@@ -175,6 +175,45 @@ describe('OCR → draft → confirm → post', () => {
     expect(p.remarks).toMatch(/google gemini api charges \(USD 20\)/);
   });
 
+  it('picks the expense account from the real chart: rule, then AI from the list, shown in the summary and editable', async () => {
+    const T = await createTenant(c.prisma, { settings: { companyAbbr: 'TT' } });
+    const erp = c.erp(T.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    for (const name of ['Miscellaneous Expenses - TT', 'Software Subscriptions - TT', 'Legal Expenses - TT', 'Staff Welfare Expenses - TT']) {
+      await erp.create('Account', { name, company: `Co ${T.tenant.slug}`, is_group: 0, root_type: 'Expense', account_type: '' });
+    }
+    await erp.create('Account', { name: 'Cost of Goods Sold - TT', company: `Co ${T.tenant.slug}`, is_group: 0, root_type: 'Expense', account_type: 'Cost of Goods Sold' });
+    const llm = c.ai.llm;
+    const offered: string[][] = [];
+    c.ai.llm = Object.assign(Object.create(llm), {
+      chooseAccount: async (_d: string, ledgers: string[]) => {
+        offered.push(ledgers);
+        return { account: 'Staff Welfare Expenses - TT', usage: { tokens: 10, costMicros: 1 } };
+      },
+    });
+    try {
+      const sayT = (text: string, id: number) => postCw(app, cwMessage({ inboxId: T.tenant.cwInboxId!, phone: T.owner.phone!, content: text, conversationId: id }));
+      const id = ++conv;
+      await sayT('paid 1700 for google gemini api charges', id);
+      const cw = c.cws.get(T.tenant.id)!;
+      expect(cw.lastText(id)).toMatch(/Account: Software Subscriptions/); // keyword rule, existing ledger
+      expect(offered).toHaveLength(0);
+
+      const id2 = ++conv;
+      await sayT('paid 900 for team outing', id2);
+      expect(cw.lastText(id2)).toMatch(/Account: Staff Welfare Expenses/); // AI pick from the real list
+      expect(offered[0]).not.toContain('Cost of Goods Sold - TT'); // not a bill target
+      expect(offered[0]).toContain('Legal Expenses - TT');
+
+      await sayT('2', id2);
+      await sayT('account legal', id2);
+      expect(cw.lastText(id2)).toMatch(/Account: Legal Expenses/);
+      await sayT('account yacht', id2);
+      expect(cw.lastText(id2)).toMatch(/couldn't find an expense account called "yacht"[\s\S]*Software Subscriptions/);
+    } finally {
+      c.ai.llm = llm;
+    }
+  });
+
   it('voice notes are transcribed and go through the same flow', async () => {
     const id = ++conv;
     const url = 'https://app.aiingo.com/rails/active_storage/voice1.ogg';

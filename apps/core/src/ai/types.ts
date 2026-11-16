@@ -25,6 +25,8 @@ export interface LlmProvider {
   readonly name: string;
   classify(text: string, ctx: { country: Country; currency: Currency; today: string }): Promise<{ result: IntentResult; usage: AiUsage }>;
   answer(question: string, context: string, lang: Language): Promise<{ text: string; usage: AiUsage }>;
+  /** Pick the best expense ledger for a description from the company's own list (null = none fits). Optional. */
+  chooseAccount?(description: string, ledgers: string[], ctx: { country: Country }): Promise<{ account: string | null; usage: AiUsage }>;
 }
 
 export interface AiProviders {

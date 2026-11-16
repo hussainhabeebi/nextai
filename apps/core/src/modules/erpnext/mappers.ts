@@ -40,21 +40,63 @@ export function account(ctx: ErpContext, key: string): string {
   return name.includes(' - ') ? name : `${name} - ${ctx.abbr}`;
 }
 
-/** Keyword → expense account heuristics for free-text expenses. VendorMapping wins when present. */
-export function guessExpenseAccount(ctx: ErpContext, description = ''): string {
+/**
+ * Keyword → candidate expense ledgers, most specific first. The first candidate that exists in the company's chart
+ * wins (custom ledgers like "Software Subscriptions" are preferred when present). VendorMapping wins over all of this.
+ */
+/** Whole words only (with plural/verb endings), so "team" isn't "tea", "business" isn't "bus", "cable" isn't "cab". */
+const words = (...w: string[]) => new RegExp(String.raw`(?<![a-z0-9])(?:${w.join('|')})(?:s|es|ing)?(?![a-z0-9])`);
+
+export const EXPENSE_RULES: Array<[RegExp, string[]]> = [
+  [words('software', 'subscription', 'saas', 'api', 'cloud', 'hosting', 'server', 'domain', 'aws', 'azure', 'gcp', 'google cloud', 'google workspace', 'gemini', 'openai', 'chatgpt', 'claude', 'anthropic', 'github', 'figma', 'canva', 'zoom', 'slack', 'notion', 'microsoft 365', 'office 365', 'adobe', 'licen[cs]e'),
+    ['Software Subscriptions', 'Software Expenses', 'Software', 'Subscriptions', 'Computer Expenses', 'IT Expenses', 'Internet Expenses', 'Telephone Expenses']],
+  [words('google ads', 'facebook', 'instagram', 'meta ads', 'linkedin', 'advert(?:isement|ising)?', 'marketing', 'promotion', 'seo', 'campaign'), ['Marketing Expenses', 'Advertisement Expenses', 'Advertising', 'Sales Expenses']],
+  [words('tea', 'coffee', 'food', 'lunch', 'dinner', 'breakfast', 'snack', 'meal', 'chai', 'restaurant', 'swiggy', 'zomato', 'talabat'), ['Entertainment Expenses', 'Staff Welfare Expenses', 'Food Expenses', 'Refreshment Expenses']],
+  [words('petrol', 'diesel', 'fuel', 'taxi', 'uber', 'ola', 'cab', 'travel', 'bus', 'train', 'flight', 'careem', 'hotel', 'parking', 'toll', 'salik'), ['Travel Expenses', 'Travelling Expenses', 'Conveyance Expenses', 'Fuel Expenses']],
+  [words('rent', 'lease'), ['Office Rent', 'Rent', 'Rent Expenses']],
+  [words('internet', 'wifi', 'broadband', 'phone', 'mobile', 'recharge', 'airtel', 'jio', 'vodafone', 'vi', 'etisalat', 'du', 'telecom'), ['Telephone Expenses', 'Internet Expenses', 'Communication Expenses', 'Utility Expenses']],
+  [words('electricity', 'electric', 'power bill', 'water bill', 'water', 'kseb', 'dewa', 'sewa', 'gas bill'), ['Utility Expenses', 'Electricity Expenses', 'Electricity Charges']],
+  [words('salary', 'salaries', 'wage', 'staff pay', 'payroll'), ['Salary', 'Salaries', 'Salary Expenses', 'Wages']],
+  [words('stationery', 'paper', 'pen', 'printer', 'ink', 'toner', 'printing'), ['Print and Stationery', 'Printing and Stationery', 'Stationery', 'Office Maintenance Expenses']],
+  [words('repair', 'maintenance', 'plumber', 'electrician', 'cleaning', 'housekeeping'), ['Repairs and Maintenance', 'Office Maintenance Expenses']],
+  [words('courier', 'postage', 'shipping', 'delivery', 'dhl', 'fedex', 'aramex', 'blue dart', 'dtdc'), ['Postal Expenses', 'Courier Charges', 'Freight and Forwarding Charges']],
+  [words('legal', 'lawyer', 'advocate', 'audit', 'ca', 'chartered accountant', 'consultant', 'consultancy', 'professional fee', 'accounting fee'), ['Legal Expenses', 'Professional Fees', 'Audit Fees', 'Consultancy Charges']],
+  [words('bank charge', 'bank fee', 'transaction fee', 'gateway fee', 'razorpay fee', 'stripe fee', 'commission'), ['Bank Charges', 'Commission on Sales', 'Bank Fees']],
+  [words('insurance'), ['Insurance Expenses', 'Insurance']],
+];
+
+const baseName = (name: string) => name.replace(/\s+-\s+[^-]+$/, '').trim().toLowerCase();
+
+/**
+ * Expense ledger for a free-text description. With `ledgers` (the company's real expense ledgers) only an existing
+ * ledger is returned and `matched` says whether a keyword rule found it; without, the first candidate is a hint.
+ */
+export function guessExpenseAccount(ctx: ErpContext, description = '', ledgers?: string[]): string {
+  return matchExpenseRule(ctx, description, ledgers)?.account ?? (ledgers?.find((l) => baseName(l) === 'miscellaneous expenses') ?? account(ctx, 'misc_expense'));
+}
+
+export function matchExpenseRule(ctx: ErpContext, description: string, ledgers?: string[]): { account: string } | undefined {
   const d = description.toLowerCase();
-  const rules: Array<[RegExp, string]> = [
-    [/tea|coffee|food|lunch|dinner|snack|meal|chai/, 'Entertainment Expenses'],
-    [/petrol|diesel|fuel|taxi|uber|ola|cab|travel|bus|train|flight|careem/, 'Travel Expenses'],
-    [/\brent\b/, 'Office Rent'],
-    [/electric|power|water|kseb|dewa|internet|wifi|phone|mobile|recharge/, 'Utility Expenses'],
-    [/salary|wage|staff pay/, 'Salary'],
-    [/stationery|paper|pen|printer|office/, 'Office Maintenance Expenses'],
-    [/courier|postage|shipping|delivery/, 'Postal Expenses'],
-    [/advert|marketing|facebook|google ads|instagram/, 'Marketing Expenses'],
-  ];
-  const hit = rules.find(([re]) => re.test(d));
-  return hit ? `${hit[1]} - ${ctx.abbr}` : account(ctx, 'misc_expense');
+  for (const [re, candidates] of EXPENSE_RULES) {
+    if (!re.test(d)) continue;
+    if (!ledgers) return { account: `${candidates[0]} - ${ctx.abbr}` };
+    for (const cand of candidates) {
+      const hit = ledgers.find((l) => baseName(l) === cand.toLowerCase());
+      if (hit) return { account: hit };
+    }
+  }
+  return undefined;
+}
+
+/** Find a ledger the user typed ("account software") among the real ones: exact, then starts-with, then contains. */
+export function findLedger(typed: string, ledgers: string[]): string | undefined {
+  const q = typed.trim().toLowerCase();
+  if (!q) return undefined;
+  return (
+    ledgers.find((l) => l.toLowerCase() === q || baseName(l) === q) ??
+    ledgers.find((l) => baseName(l).startsWith(q)) ??
+    ledgers.find((l) => baseName(l).includes(q))
+  );
 }
 
 /** Purchase-side tax template. India Compliance default names; UAE VAT template; overridable. */
@@ -225,7 +267,10 @@ export function partyDoc(kind: 'Customer' | 'Supplier', name: string, extra: { t
 }
 
 type AccountRole = 'bank' | 'cash' | 'expense' | 'income';
-const accountCache = new Map<string, { at: number; ok: Set<string>; fallback: Partial<Record<AccountRole, string>> }>();
+const accountCache = new Map<string, { at: number; ok: Set<string>; expense: string[]; fallback: Partial<Record<AccountRole, string>> }>();
+
+/** Account types that are expenses in the chart but never a target for a typed/photographed bill. */
+const NON_BILL_EXPENSE_TYPES = new Set(['Cost of Goods Sold', 'Stock Adjustment', 'Depreciation', 'Round Off', 'Expenses Included In Valuation', 'Expenses Included In Asset Valuation', 'Temporary', 'Accumulated Depreciation']);
 
 /**
  * Make sure every account in an ERPNext document body exists in the company and is a ledger (not a group);
@@ -239,6 +284,12 @@ export async function resolveAccounts(
   body: Record<string, unknown>,
   cacheKey: string = ctx.company, // pass the tenant id: company names can repeat across ERPNext sites
 ): Promise<Record<string, string>> {
+  const cache = await loadChart(erp, ctx, cacheKey);
+  return applyChart(cache, body);
+}
+
+/** The company's ledgers (cached 10 min per tenant + company). */
+async function loadChart(erp: Pick<ErpClient, 'list'>, ctx: ErpContext, cacheKey: string) {
   const key = `${cacheKey}:${ctx.company}`;
   let cache = accountCache.get(key);
   if (!cache || Date.now() - cache.at > 10 * 60_000) {
@@ -253,6 +304,7 @@ export async function resolveAccounts(
     cache = {
       at: Date.now(),
       ok: new Set(leaves.map((r) => r.name)),
+      expense: leaves.filter((r) => r.root_type === 'Expense' && !NON_BILL_EXPENSE_TYPES.has(r.account_type ?? '')).map((r) => r.name).sort(),
       fallback: {
         bank: pick((r) => r.account_type === 'Bank', ctx.settings.defaultBankAccount),
         cash: pick((r) => r.account_type === 'Cash', `Cash - ${ctx.abbr}`),
@@ -262,6 +314,15 @@ export async function resolveAccounts(
     };
     accountCache.set(key, cache);
   }
+  return cache;
+}
+
+/** The company's expense ledgers that a bill can be booked to (empty when ERPNext can't be read). */
+export async function expenseLedgers(erp: Pick<ErpClient, 'list'>, ctx: ErpContext, cacheKey: string): Promise<string[]> {
+  return (await loadChart(erp, ctx, cacheKey)).expense;
+}
+
+function applyChart(cache: NonNullable<ReturnType<typeof accountCache.get>>, body: Record<string, unknown>): Record<string, string> {
   const changed: Record<string, string> = {};
   const fix = (name: unknown, role: AccountRole): unknown => {
     if (typeof name !== 'string' || !name || cache!.ok.has(name)) return name;
