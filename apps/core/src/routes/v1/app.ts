@@ -310,9 +310,7 @@ export const appRoutes =
     app.patch('/settings', { schema: { tags: ['app'], body: settingsPatch } }, async (req) => {
       requireOwner(req);
       const t = req.tenant!;
-      const validated = tenantSettingsSchema.parse({ ...(t.settings as object), ...(req.body.settings ?? {}) });
-      // Keep keys the schema doesn't model (e.g. provisioning progress) instead of silently dropping them.
-      const merged = { ...(t.settings as object), ...validated };
+      const merged = tenantSettingsSchema.parse({ ...(t.settings as object), ...(req.body.settings ?? {}) });
       const updated = await req.db!.tenant.update({
         where: { id: t.id },
         data: { name: req.body.name, language: req.body.language, settings: merged as Prisma.InputJsonValue },

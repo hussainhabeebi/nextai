@@ -57,12 +57,7 @@ export async function buildApp(c: Container): Promise<FastifyInstance> {
 
   await app.register(helmet, { contentSecurityPolicy: false });
   const origins = e.CORS_ORIGINS.length ? e.CORS_ORIGINS : [e.APP_URL];
-  const landing = e.LANDING_URL.replace(/\/+$/, '');
-  // The public website may call the signup endpoints only (no cookies); everything else is app-only.
-  await app.register(cors, {
-    delegator: (req, cb) =>
-      cb(null, req.url?.startsWith('/v1/signup') ? { origin: [...origins, landing, landing.replace('://', '://www.')], credentials: false } : { origin: origins, credentials: true }),
-  });
+  await app.register(cors, { origin: origins, credentials: true });
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 10 } });
   await app.register(rateLimit, {
