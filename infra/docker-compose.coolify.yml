@@ -79,6 +79,10 @@ services:
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@nextaierp.com}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-NextAi Reports <reports@nextaierp.com>}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      ADMIN_REPORT_EMAILS: ${ADMIN_REPORT_EMAILS:-}
       MOCK_EXTERNALS: ${MOCK_EXTERNALS:-false}
       DOCS_PUBLIC: ${DOCS_PUBLIC:-false}
       LOCAL_STORAGE_DIR: /data/storage
@@ -131,6 +135,10 @@ services:
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@nextaierp.com}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-NextAi Reports <reports@nextaierp.com>}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      ADMIN_REPORT_EMAILS: ${ADMIN_REPORT_EMAILS:-}
       MOCK_EXTERNALS: ${MOCK_EXTERNALS:-false}
       DOCS_PUBLIC: ${DOCS_PUBLIC:-false}
       LOCAL_STORAGE_DIR: /data/storage
@@ -186,6 +194,10 @@ services:
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@nextaierp.com}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-NextAi Reports <reports@nextaierp.com>}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      ADMIN_REPORT_EMAILS: ${ADMIN_REPORT_EMAILS:-}
       MOCK_EXTERNALS: ${MOCK_EXTERNALS:-false}
       DOCS_PUBLIC: ${DOCS_PUBLIC:-false}
       LOCAL_STORAGE_DIR: /data/storage

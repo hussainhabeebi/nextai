@@ -9,6 +9,9 @@ const csv = z
   .optional()
   .transform((v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : []));
 
+/** Optional email where an empty string (e.g. `MAIL_REPLY_TO=` from .env.example) means "not set". */
+const optionalEmail = z.preprocess((v) => (v === '' ? undefined : v), z.string().email().optional());
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(8090),
@@ -43,7 +46,7 @@ export const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   /** Verified Resend sender, e.g. "NextAi Reports <reports@nextaierp.com>". */
   MAIL_FROM: z.string().default('NextAi <reports@nextaierp.com>'),
-  MAIL_REPLY_TO: z.string().email().optional(),
+  MAIL_REPLY_TO: optionalEmail,
   /** Recipients of the morning platform report (report.admin_daily). */
   ADMIN_REPORT_EMAILS: csv,
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -51,7 +54,7 @@ export const envSchema = z.object({
   STRIPE_PUBLISHABLE_KEY: z.string().optional(),
   PROVISIONER_URL: z.string().optional(),
   PROVISIONER_SECRET: z.string().optional(),
-  ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
+  ADMIN_BOOTSTRAP_EMAIL: optionalEmail,
   ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
   /** Use in-memory fakes for ERPNext/Chatwoot (local dev without external systems). */
