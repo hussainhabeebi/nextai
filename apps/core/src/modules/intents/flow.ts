@@ -176,7 +176,7 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
         currency,
         lines: [],
         total: e.amount,
-        paymentMode: e.paymentMode ?? 'bank',
+        paymentMode: e.paymentMode ?? 'cash', // cash unless a bank-type mode is mentioned
         validationIssues: [],
       };
       await createDraft(c, tenant, { ...base, type: intent.intent, payload, confidence: intent.confidence });
