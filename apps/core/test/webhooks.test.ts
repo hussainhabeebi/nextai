@@ -39,6 +39,15 @@ describe('chatwoot webhook', () => {
     expect(none.statusCode).toBe(401);
     const tok = await app.inject({ method: 'POST', url: `/webhooks/chatwoot?token=${process.env.CHATWOOT_WEBHOOK_SECRET}`, payload: body, headers: { 'content-type': 'application/json' } });
     expect(tok.statusCode).toBe(200);
+    // Newer Chatwoot signs with its own per-bot secret: a valid URL token must still be accepted.
+    const signedByChatwoot = { 'content-type': 'application/json', 'x-chatwoot-signature': 'sha256=' + 'ab'.repeat(32), 'x-chatwoot-timestamp': String(Math.floor(Date.now() / 1000)) };
+    const both = await app.inject({ method: 'POST', url: `/webhooks/chatwoot?token=${process.env.CHATWOOT_WEBHOOK_SECRET}`, payload: JSON.stringify(cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, content: 'hi', conversationId: 4300 })), headers: signedByChatwoot });
+    expect(both.statusCode).toBe(200);
+    const wrong = await app.inject({ method: 'POST', url: '/webhooks/chatwoot?token=not-the-secret-123', payload: body, headers: signedByChatwoot });
+    expect(wrong.statusCode).toBe(401);
+    const { rejected } = await readWebhookTraces(c.redis);
+    expect(rejected!.detail).toMatch(/\(not…123, 18 chars\) does not match CHATWOOT_WEBHOOK_SECRET/);
+    expect(rejected!.detail).not.toContain(process.env.CHATWOOT_WEBHOOK_SECRET!);
   });
 
   it('records the last accepted and rejected Chatwoot call for Admin → Integrations', async () => {
