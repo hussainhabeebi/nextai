@@ -106,6 +106,27 @@ payment_out (they paid a supplier), ask_books (question about their numbers), re
     return { result: parseText(response.content, intentResultSchema), usage: usageOf(response.usage) };
   }
 
+  async chooseAccount(description: string, ledgers: string[], ctx: { country: Country }) {
+    const NONE = 'NONE';
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 2000,
+      system: `You book small-business expenses in ERPNext (${ctx.country === 'IN' ? 'India' : 'UAE'}). Choose the single expense account that best fits the expense, from the company's own chart. Reply ${NONE} only if none is a reasonable fit; prefer a specific account over Miscellaneous Expenses.`,
+      output_config: {
+        effort: 'low',
+        format: {
+          type: 'json_schema',
+          schema: { type: 'object', properties: { account: { type: 'string', enum: [...ledgers, NONE] } }, required: ['account'], additionalProperties: false },
+        },
+      },
+      messages: [{ role: 'user', content: `Expense: ${description.slice(0, 500)}` }],
+    });
+    if (response.stop_reason !== 'end_turn') return { account: null, usage: usageOf(response.usage) };
+    const text = response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+    const picked = (JSON.parse(text) as { account: string }).account;
+    return { account: picked === NONE || !ledgers.includes(picked) ? null : picked, usage: usageOf(response.usage) };
+  }
+
   async answer(question: string, context: string, lang: Language) {
     const response = await this.client.messages.create({
       model: MODEL,

@@ -6,7 +6,8 @@ import { logger } from '../../lib/logger.js';
 import type { BotContext } from '../chatwoot/context.js';
 import { say } from '../chatwoot/context.js';
 import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, summaryText, updateDraftPayload } from '../drafts/service.js';
-import { erpContext, guessExpenseAccount } from '../erpnext/mappers.js';
+import { erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
+import { chooseExpenseAccount } from '../erpnext/expense-account.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 
@@ -78,8 +79,33 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
   await runIntent(ctx, intent);
 }
 
+/** Account learned from earlier confirmed entries for this supplier (case-insensitive). */
+async function learnedAccount(c: BotContext['c'], tenantId: string, party?: string): Promise<string | undefined> {
+  if (!party) return undefined;
+  const hit = await tenantDb(c.prisma, tenantId).vendorMapping.findFirst({ where: { tenantId, supplierName: { equals: party, mode: 'insensitive' } } });
+  return hit?.expenseAccount;
+}
+
 async function applyEditAndResend(ctx: BotContext, draftId: string, patch: Partial<DraftPayload>) {
   const { c, tenant, conversationId } = ctx;
+  if (patch.expenseAccount) {
+    // "account software" → the real ledger "Software Subscriptions - ATL"; unknown names get a list to choose from.
+    let ledgers: string[] = [];
+    try {
+      ledgers = await expenseLedgers(c.erp(tenant), erpContext(tenant), tenant.id);
+    } catch {
+      /* ERPNext unreachable: keep what was typed; posting falls back safely */
+    }
+    if (ledgers.length) {
+      const found = findLedger(patch.expenseAccount, ledgers);
+      if (!found) {
+        const list = ledgers.slice(0, 25).map((l) => `• ${l.replace(/\s+-\s+[^-]+$/, '')}`).join('\n');
+        await say(ctx, `I couldn't find an expense account called "${patch.expenseAccount}". Reply "account <name>" with one of:\n${list}`);
+        return;
+      }
+      patch.expenseAccount = found;
+    }
+  }
   const current = await getDraft(c, tenant.id, draftId);
   const p = current.payload as DraftPayload;
   if (patch.total !== undefined && p.lines.length <= 1) {
@@ -122,7 +148,6 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
   const e = intent.entities;
   const today = new Date().toISOString().slice(0, 10);
   const currency = tenant.currency as Currency; // books are kept in the business currency
-  const erpCtx = erpContext(tenant);
   const money = ['record_expense', 'record_sale', 'payment_in', 'payment_out'].includes(intent.intent);
   if (money && e.amount && e.currency && e.currency !== tenant.currency) {
     // "paid 20 USD …" in an INR business: posting 20 would book ₹20. Ask what was actually charged.
@@ -143,7 +168,7 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
         lines: [{ description: desc, qty: 1, rate: e.amount, amount: e.amount }],
         total: e.amount,
         paymentMode: e.paymentMode ?? 'cash',
-        expenseAccount: guessExpenseAccount(erpCtx, desc),
+        expenseAccount: (await learnedAccount(c, tenant.id, e.party)) ?? (await chooseExpenseAccount(c, tenant, [desc, e.party].filter(Boolean).join(' – '))),
         remarks: desc,
         validationIssues: [],
       };

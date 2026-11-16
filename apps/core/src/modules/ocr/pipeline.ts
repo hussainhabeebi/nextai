@@ -14,7 +14,8 @@ import { logger } from '../../lib/logger.js';
 import type { Container } from '../../container.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { createDraft } from '../drafts/service.js';
-import { erpContext, guessExpenseAccount, purchaseTaxTemplate } from '../erpnext/mappers.js';
+import { erpContext, purchaseTaxTemplate } from '../erpnext/mappers.js';
+import { chooseExpenseAccount } from '../erpnext/expense-account.js';
 import { incrementUsage } from '../usage/usage.js';
 import { bestMatch } from './match.js';
 import { validateExtraction } from './validate.js';
@@ -156,7 +157,7 @@ export async function processOcr(c: Container, job: OcrJob) {
     }
   }
   const taxes = { cgst: x.tax.cgst, sgst: x.tax.sgst, igst: x.tax.igst, vat: x.tax.vat };
-  expenseAccount ??= guessExpenseAccount(ctx, x.lines.map((l) => l.description).join(' ') || partyName);
+  expenseAccount ??= await chooseExpenseAccount(c, tenant, [partyName, ...x.lines.map((l) => l.description)].filter(Boolean).join(' – '));
   taxTemplate ??= purchaseTaxTemplate(ctx, taxes);
 
   // Duplicate: same supplier + invoice no + amount already drafted (and not cancelled).
