@@ -83,7 +83,21 @@ export const DOCTYPE_FOR: Record<DraftType, string> = {
   payment_out: 'Payment Entry',
 };
 
-const isCash = (mode?: string) => !mode || /cash/i.test(mode);
+/**
+ * Which money account a payment mode uses. Default is cash: only an explicit bank-type mode goes to the bank.
+ * A card goes to the business's card account (settings.accounts.card, e.g. "HDFC Credit Card - ABC") when set,
+ * otherwise to cash: a credit card is not the bank account.
+ */
+export function moneyAccount(ctx: ErpContext, mode?: string): { account: string; voucherType: string; modeOfPayment: string; kind: 'cash' | 'bank' | 'card' } {
+  const m = (mode ?? '').toLowerCase();
+  if (/card/.test(m) && ctx.settings.accounts.card) {
+    return { account: account(ctx, 'card'), voucherType: 'Credit Card Entry', modeOfPayment: 'Credit Card', kind: 'card' };
+  }
+  if (/bank|upi|transfer|cheque|check|neft|imps|rtgs|wire|online|gpay|phonepe|paytm/.test(m)) {
+    return { account: account(ctx, 'bank'), voucherType: 'Bank Entry', modeOfPayment: 'Bank Draft', kind: 'bank' };
+  }
+  return { account: account(ctx, 'cash'), voucherType: 'Cash Entry', modeOfPayment: 'Cash', kind: 'cash' };
+}
 
 /** Map a confirmed draft payload to an ERPNext document body. Pure function – unit tested. */
 export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Record<string, unknown> {
@@ -116,8 +130,8 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         ...(paid
           ? {
               is_paid: 1,
-              mode_of_payment: isCash(p.paymentMode) ? 'Cash' : 'Bank Draft',
-              cash_bank_account: p.paidFromAccount ?? account(ctx, isCash(p.paymentMode) ? 'cash' : 'bank'),
+              mode_of_payment: moneyAccount(ctx, p.paymentMode).modeOfPayment,
+              cash_bank_account: p.paidFromAccount ?? moneyAccount(ctx, p.paymentMode).account,
               paid_amount: p.total,
             }
           : {}),
@@ -125,15 +139,16 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
     }
     case 'journal_entry': {
       const expense = p.expenseAccount ?? account(ctx, 'misc_expense');
-      const credit = p.paidFromAccount ?? account(ctx, isCash(p.paymentMode) ? 'cash' : 'bank');
+      const money = moneyAccount(ctx, p.paymentMode);
+      const credit = p.paidFromAccount ?? money.account;
       return {
         doctype: 'Journal Entry',
-        voucher_type: isCash(p.paymentMode) ? 'Cash Entry' : 'Bank Entry',
+        voucher_type: money.voucherType,
         company: ctx.company,
         posting_date: p.date,
         // ERPNext requires a reference on Bank Entries.
-        cheque_no: p.referenceNo ?? (isCash(p.paymentMode) ? undefined : `NX-${p.documentId?.slice(0, 8) ?? Date.now()}`),
-        cheque_date: p.referenceNo || !isCash(p.paymentMode) ? p.date : undefined,
+        cheque_no: p.referenceNo ?? (money.kind === 'cash' ? undefined : `NX-${p.documentId?.slice(0, 8) ?? Date.now()}`),
+        cheque_date: p.referenceNo || money.kind !== 'cash' ? p.date : undefined,
         user_remark: remarks ?? lines.map((l) => l.description).join(', '),
         accounts: [
           { account: expense, debit_in_account_currency: p.total, credit_in_account_currency: 0 },
@@ -165,7 +180,8 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
     case 'payment_in':
     case 'payment_out': {
       const receive = type === 'payment_in';
-      const bankOrCash = account(ctx, isCash(p.paymentMode) ? 'cash' : 'bank');
+      const money = moneyAccount(ctx, p.paymentMode);
+      const bankOrCash = money.account;
       return {
         doctype: 'Payment Entry',
         payment_type: receive ? 'Receive' : 'Pay',
@@ -173,11 +189,11 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         posting_date: p.date,
         party_type: receive ? 'Customer' : 'Supplier',
         party: p.partyName,
-        mode_of_payment: isCash(p.paymentMode) ? 'Cash' : 'Bank Draft',
+        mode_of_payment: money.modeOfPayment,
         paid_amount: p.total,
         received_amount: p.total,
         ...(receive ? { paid_to: p.paidToAccount ?? bankOrCash } : { paid_from: p.paidFromAccount ?? bankOrCash }),
-        reference_no: p.referenceNo ?? (isCash(p.paymentMode) ? undefined : `NX-${Date.now()}`),
+        reference_no: p.referenceNo ?? (money.kind === 'cash' ? undefined : `NX-${Date.now()}`),
         reference_date: p.date,
         remarks,
       };
@@ -254,7 +270,8 @@ export async function resolveAccounts(
     changed[name] = sub;
     return sub;
   };
-  const roleOfCashBank = (name: unknown) => (typeof name === 'string' && /cash/i.test(name) ? 'cash' : 'bank');
+  // A missing card account falls back to cash (the default), not to the bank.
+  const roleOfCashBank = (name: unknown) => (typeof name === 'string' && /cash|card/i.test(name) ? 'cash' : 'bank');
   for (const item of (body.items as Array<Record<string, unknown>> | undefined) ?? []) {
     if ('expense_account' in item) item.expense_account = fix(item.expense_account, 'expense');
     if ('income_account' in item) item.income_account = fix(item.income_account, 'income');

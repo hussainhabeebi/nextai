@@ -21,7 +21,7 @@ import { summaryFigures } from '../../modules/outbound/jobs.js';
 import { sendWhatsApp } from '../../modules/outbound/whatsapp.js';
 import { runProvisionStep } from '../../modules/provisioning/wizard.js';
 import { readWebhookTraces } from '../../modules/chatwoot/diagnostics.js';
-import { clearAccountCache } from '../../modules/erpnext/mappers.js';
+import { clearAccountCache, erpContext } from '../../modules/erpnext/mappers.js';
 import { sealErpKey, sealErpSecret } from '../../modules/tenants/secrets.js';
 import { ErpError } from '@nextai/erpnext-client';
 import { R2Storage } from '../../storage/storage.js';
@@ -204,6 +204,33 @@ export const integrationRoutes =
         return { ok: true, siteUrl, company: chosen.name, abbr: chosen.abbr, user: ping.user, latencyMs: ping.latencyMs, warnings };
       },
     );
+
+    /** Ledgers a payment can come from, for the Money accounts pickers (cash, bank, credit card). */
+    app.get('/tenants/:id/erpnext/accounts', { ...ops, schema: { tags: ['admin'], params: uuidParam } }, async (req) => {
+      const tenant = await loadTenant(req.params.id);
+      if (!tenant.erpApiKeyEnc) throw badRequest('ERPNext is not connected for this business');
+      const ctx = erpContext(tenant);
+      const rows = await upstream(() =>
+        c.erp(tenant).list<{ name: string; account_type?: string; root_type?: string }>('Account', {
+          filters: [['company', '=', ctx.company], ['is_group', '=', 0]],
+          fields: ['name', 'account_type', 'root_type'],
+          limit: 5000,
+        }),
+      );
+      const names = (pred: (r: (typeof rows)[number]) => boolean) => rows.filter(pred).map((r) => r.name).sort();
+      return {
+        company: ctx.company,
+        cash: names((r) => r.account_type === 'Cash'),
+        bank: names((r) => r.account_type === 'Bank'),
+        // credit cards are usually a Bank-type or plain liability ledger
+        card: names((r) => r.account_type === 'Bank' || (r.root_type === 'Liability' && !r.account_type)),
+        current: {
+          cash: ctx.settings.accounts.cash ?? `Cash - ${ctx.abbr}`,
+          bank: ctx.settings.defaultBankAccount ?? null,
+          card: ctx.settings.accounts.card ?? null,
+        },
+      };
+    });
 
     // ---------------- Chatwoot ----------------
     app.post(
