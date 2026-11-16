@@ -33,13 +33,16 @@ export const chatwootWebhook =
         token: (req.query as { token?: string }).token,
       });
       if (!ok) {
-        const hasToken = !!(req.query as { token?: string }).token;
+        const token = (req.query as { token?: string }).token;
+        const signed = !!req.headers['x-chatwoot-signature'];
+        // Shows only the first/last 3 characters, enough to compare with Coolify without exposing the secret.
+        const hint = (v: string) => (v.length > 8 ? `${v.slice(0, 3)}…${v.slice(-3)}` : '…');
         await traceWebhook(c.redis, {
           result: 'bad_token',
           ip,
-          detail: hasToken
-            ? 'The token in the Agent Bot URL does not match CHATWOOT_WEBHOOK_SECRET'
-            : 'The Agent Bot URL has no ?token= (or the signature is wrong)',
+          detail: token
+            ? `The token in the Agent Bot URL (${hint(token)}, ${token.length} chars) does not match CHATWOOT_WEBHOOK_SECRET (${hint(e.CHATWOOT_WEBHOOK_SECRET)}, ${e.CHATWOOT_WEBHOOK_SECRET.length} chars)`
+            : `The Agent Bot URL has no ?token=${signed ? ' (Chatwoot signed the call with its own secret, which NextAi cannot check)' : ''}`,
         });
         return reply.code(401).send({ error: 'invalid_signature' });
       }
