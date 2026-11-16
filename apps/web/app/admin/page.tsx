@@ -28,7 +28,7 @@ export default function AdminDashboard() {
         <Stat label="Trials" value={d?.tenants.trial ?? '—'} />
         <Stat label="Past due" value={d?.tenants.pastDue ?? '—'} />
         <Stat label="Messages (month)" value={d?.messagesThisMonth ?? '—'} />
-        <Stat label="OCR pages (month)" value={d?.ocrPagesThisMonth ?? '—'} />
+        <Stat label="Bill entries (month)" value={d?.ocrPagesThisMonth ?? '—'} />
         <Stat label="AI cost (month)" value={d ? `$${d.aiCostUsd.toFixed(2)}` : '—'} />
         <Stat label="Failed jobs" value={d?.failedJobs ?? '—'} sub={`${d?.reviewQueue ?? 0} drafts awaiting review`} />
       </div>

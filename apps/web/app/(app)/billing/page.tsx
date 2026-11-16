@@ -27,7 +27,7 @@ export default function BillingPage() {
   };
   if (!b) return <Page title="Billing" back="/more"><Skeleton className="h-96" /></Page>;
   const bars: Array<[string, number, number]> = [
-    ['Bills read (OCR pages)', b.usage.ocrPages, b.limits.ocrPagesPerMonth],
+    ['Bill entries', b.usage.ocrPages, b.limits.ocrPagesPerMonth],
     ['Invoices sent', b.usage.invoicesSent, b.limits.invoicesSentPerMonth],
     ['Team members', b.usage.users, b.limits.users],
   ];

@@ -10,7 +10,7 @@ export async function seed(prisma: PrismaClient, opts: { ownerPhone?: string; ad
     for (const p of DEFAULT_PLANS) {
       await tx.plan.upsert({
         where: { code: p.code },
-        update: { name: p.name, priceMonthly: p.priceMonthly, limits: p.limits },
+        update: {}, // never overwrite plans edited in Admin → Plans
         create: { code: p.code, name: p.name, priceMonthly: p.priceMonthly, limits: p.limits, currency: 'INR' },
       });
     }

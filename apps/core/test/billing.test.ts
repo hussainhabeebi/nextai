@@ -86,15 +86,26 @@ describe('Stripe billing', () => {
 });
 
 describe('plan gating on WhatsApp', () => {
-  it('blocks bill scanning beyond the monthly OCR page limit', async () => {
-    const G = await createTenant(c.prisma); // growth plan: 500 pages
-    await incrementUsage(c.prisma, G.tenant.id, { ocrPages: 500 });
+  it('blocks bill entries beyond the monthly plan limit', async () => {
+    const G = await createTenant(c.prisma); // growth plan: 1000 bill entries
+    await incrementUsage(c.prisma, G.tenant.id, { ocrPages: 1000 });
     c.chatwoot(G.tenant);
     const url = 'https://app.aiingo.com/rails/active_storage/over.jpg';
     c.cws.get(G.tenant.id)!.attachments.set(url, { content: new TextEncoder().encode('x'), mime: 'image/jpeg' });
     const r = await postCw(app, cwMessage({ inboxId: G.tenant.cwInboxId!, phone: G.owner.phone!, attachments: [{ file_type: 'image', data_url: url }], conversationId: 55 }));
     expect(r.json().status).toBe('billing_blocked');
-    expect(c.cws.get(G.tenant.id)!.lastText(55)).toMatch(/plan limit.*bill scanning/);
+    expect(c.cws.get(G.tenant.id)!.lastText(55)).toMatch(/plan limit.*bill entries/);
     expect(c.queue.jobs.filter((j) => j.name === 'ocr.process' && j.data.tenantId === G.tenant.id)).toHaveLength(0);
+  });
+
+  it('re-seeding keeps plan limits edited in Admin → Plans', async () => {
+    const before = await c.prisma.plan.findUniqueOrThrow({ where: { code: 'base' } });
+    expect((before.limits as { ocrPagesPerMonth: number }).ocrPagesPerMonth).toBe(200);
+    const edited = { ...(before.limits as Record<string, unknown>), ocrPagesPerMonth: 321 };
+    await c.prisma.plan.update({ where: { code: 'base' }, data: { limits: edited } });
+    await seed(c.prisma);
+    const after = await c.prisma.plan.findUniqueOrThrow({ where: { code: 'base' } });
+    expect((after.limits as { ocrPagesPerMonth: number }).ocrPagesPerMonth).toBe(321);
+    await c.prisma.plan.update({ where: { code: 'base' }, data: { limits: before.limits as object } });
   });
 });

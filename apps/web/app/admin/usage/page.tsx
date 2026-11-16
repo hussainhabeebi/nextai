@@ -21,7 +21,7 @@ export default function Usage() {
         cols={[
           { h: 'Tenant', c: (r) => r.tenant },
           { h: 'Messages', c: (r) => r.messages, className: 'text-end tabular-nums' },
-          { h: 'OCR pages', c: (r) => r.ocrPages, className: 'text-end tabular-nums' },
+          { h: 'Bill entries', c: (r) => r.ocrPages, className: 'text-end tabular-nums' },
           { h: 'AI tokens', c: (r) => r.aiTokens.toLocaleString(), className: 'text-end tabular-nums' },
           { h: 'AI cost', c: (r) => `$${r.aiCostUsd.toFixed(2)}`, className: 'text-end tabular-nums' },
           { h: 'Invoices sent', c: (r) => r.invoicesSent, className: 'text-end tabular-nums' },

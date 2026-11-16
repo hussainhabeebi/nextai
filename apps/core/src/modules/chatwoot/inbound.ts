@@ -62,7 +62,7 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
   }
   const hasDocs = (evt.attachments ?? []).some((a) => a.file_type !== 'audio');
   if (hasDocs && (await usageFor(c, tenant, 'ocrPagesPerMonth')) >= limits.ocrPagesPerMonth) {
-    await cw.sendText(conversationId, t(ulang, 'bot.planLimit', { what: 'bill scanning', link: upgrade }));
+    await cw.sendText(conversationId, t(ulang, 'bot.planLimit', { what: 'bill entries', link: upgrade }));
     return 'billing_blocked';
   }
 

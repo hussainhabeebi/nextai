@@ -56,7 +56,7 @@ export default function TenantDetail() {
       </H1>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Plan" value={t.plan?.name ?? '—'} sub={`${t.country} · ${t.currency}`} />
-        <Stat label="OCR pages" value={`${usage?.ocrPages ?? 0} / ${t.limits.ocrPagesPerMonth}`} sub={usage?.period} />
+        <Stat label="Bill entries" value={`${usage?.ocrPages ?? 0} / ${t.limits.ocrPagesPerMonth}`} sub={usage?.period} />
         <Stat label="Invoices sent" value={`${usage?.invoicesSent ?? 0} / ${t.limits.invoicesSentPerMonth}`} />
         <Stat label="AI cost" value={`$${((usage?.aiCostMicros ?? 0) / 1e6).toFixed(2)}`} sub={`${usage?.messages ?? 0} messages`} />
       </div>
