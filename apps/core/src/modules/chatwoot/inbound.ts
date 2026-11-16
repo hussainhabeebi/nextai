@@ -1,4 +1,5 @@
 import type { ChatwootWebhook } from '@nextai/chatwoot-client';
+import { markCustomerWindow } from './diagnostics.js';
 import { QUEUES, normalizePhone, t, type Language } from '@nextai/shared';
 import type { Tenant } from '@prisma/client';
 import { env } from '../../config/env.js';
@@ -32,6 +33,7 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
   const lang = (tenant.language as Language) ?? 'en';
   const rawPhone = evt.sender?.phone_number ?? evt.conversation?.contact_inbox?.source_id;
   const phone = rawPhone ? normalizePhone(rawPhone, tenant.country) : undefined;
+  if (phone) await markCustomerWindow(c.redis, tenant.id, phone); // free-text replies allowed for 24h
   const db = tenantDb(c.prisma, tenant.id);
   const user = phone ? await db.user.findFirst({ where: { tenantId: tenant.id, phone, status: { not: 'disabled' } } }) : null;
 
