@@ -39,6 +39,13 @@ export const envSchema = z.object({
   AI_STT_API_KEY: z.string().optional(),
   AI_LLM_PROVIDER: z.string().default('mock'),
   AI_LLM_API_KEY: z.string().optional(),
+  /** Resend (https://resend.com) for email reports. Without a key, email reports are skipped. */
+  RESEND_API_KEY: z.string().optional(),
+  /** Verified Resend sender, e.g. "NextAi Reports <reports@nextaierp.com>". */
+  MAIL_FROM: z.string().default('NextAi <reports@nextaierp.com>'),
+  MAIL_REPLY_TO: z.string().email().optional(),
+  /** Recipients of the morning platform report (report.admin_daily). */
+  ADMIN_REPORT_EMAILS: csv,
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_PUBLISHABLE_KEY: z.string().optional(),

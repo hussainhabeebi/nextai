@@ -27,6 +27,8 @@ export const tenantSettingsSchema = z.object({
   timezone: z.string().default('Asia/Kolkata'),
   reminders: reminderScheduleSchema.default({}),
   dailySummary: z.object({ enabled: z.boolean().default(true), hourLocal: z.number().int().min(0).max(23).default(20) }).default({}),
+  /** Daily summary by email (Resend). Owners with an email address always receive it; `recipients` adds accountants etc. */
+  emailReports: z.object({ enabled: z.boolean().default(true), recipients: z.array(z.string().email()).max(10).default([]) }).default({}),
   companyName: z.string().optional(),
   taxId: z.string().optional(),
   invoiceTemplate: z.string().optional(),

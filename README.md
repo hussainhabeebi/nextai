@@ -21,7 +21,8 @@ infra/
 docs/architecture.md
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the design (multi-tenancy, flows, security).
+See [docs/architecture.md](docs/architecture.md) for the design (multi-tenancy, flows, security) and
+[docs/go-live.md](docs/go-live.md) for the launch checklist (Chatwoot/WhatsApp, Resend email reports, PWA, admin).
 
 ## Local setup
 
@@ -108,7 +109,8 @@ pnpm --filter @nextai/web build && pnpm --filter @nextai/web e2e
 2. Run the steps (each is idempotent and can be retried):
    `erp_site` → `erp_api_user` → `erp_company` → `tunnel_hostname` → `chatwoot_inbox` → `erp_webhooks` → `test_connections` → `invite_owner`.
    - The provisioner (`infra/provisioner`) must run on the ERPNext host with `PROVISIONER_SECRET`.
-   - Create the WhatsApp inbox and an Agent Bot in Chatwoot, set the bot's outgoing URL to
+   - Easiest: Admin → **Integrations** → tenant → *Connect inbox* with your Chatwoot access token, account id and
+     inbox id (creates and assigns the Agent Bot). Or manually: create the WhatsApp inbox and an Agent Bot in Chatwoot, set the bot's outgoing URL to
      `https://api.nextaierp.com/webhooks/chatwoot?token=<CHATWOOT_WEBHOOK_SECRET>`, then paste account id,
      inbox id and bot token into the wizard (stored encrypted).
    - `erp_webhooks` shows a one-time secret: create ERPNext Webhooks for Sales Invoice and Payment Entry
