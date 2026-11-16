@@ -9,6 +9,8 @@ import {
   type Extraction,
 } from '@nextai/shared';
 import type { Prisma, Tenant } from '@prisma/client';
+import { t, type Language } from '@nextai/shared';
+import { logger } from '../../lib/logger.js';
 import type { Container } from '../../container.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { createDraft } from '../drafts/service.js';
@@ -51,6 +53,31 @@ export function preparePdf(bytes: Uint8Array): { pages: number; text: string } {
   return { pages, text: chunks.join('\n').trim() };
 }
 
+/** File types the vision model accepts. */
+export const READABLE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'] as const;
+
+/**
+ * The real type from the file's first bytes. Chatwoot/WhatsApp often label photos `image/jpg` or
+ * `application/octet-stream`, which the vision API rejects. Returns undefined for unreadable types (e.g. HEIC).
+ */
+export function sniffMime(bytes: Uint8Array, declared = ''): string | undefined {
+  const b = Buffer.from(bytes.subarray(0, 16));
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (b.subarray(0, 4).toString('latin1') === '%PDF') return 'application/pdf';
+  if (b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  if (b.subarray(0, 4).toString('latin1') === 'GIF8') return 'image/gif';
+  const normal = declared === 'image/jpg' || declared === 'image/pjpeg' ? 'image/jpeg' : declared;
+  return (READABLE_MIME as readonly string[]).includes(normal) ? normal : undefined;
+}
+
+/** Errors worth retrying (rate limits, overload, network); anything else will fail the same way again. */
+function isTransient(err: unknown): boolean {
+  const status = (err as { status?: number }).status;
+  if (typeof status === 'number') return status === 408 || status === 409 || status === 429 || status >= 500;
+  return /connection|timeout|ECONNRESET|ETIMEDOUT|fetch failed/i.test((err as Error).message ?? '');
+}
+
 export function decideDraftType(x: Extraction, currency: Currency): DraftType {
   if (x.docType === 'sales_invoice') return 'sales_invoice';
   const total = x.total ?? 0;
@@ -71,16 +98,32 @@ export async function processOcr(c: Container, job: OcrJob) {
   if (existing) return existing; // idempotent on retry
 
   const file = await c.storage.get(tenant.id, doc.r2Key);
-  const prepared = doc.mime === 'application/pdf' ? preparePdf(file.body) : { pages: 1, text: '' };
+  const mime = sniffMime(file.body, doc.mime);
+  if (!mime) {
+    // e.g. iPhone HEIC sent as a document: ask for a readable format instead of failing silently.
+    if (job.conversationId) await c.chatwoot(tenant).sendText(job.conversationId, t((tenant.language as Language) ?? 'en', 'bot.unsupportedFile'));
+    logger.warn({ tenantId: tenant.id, documentId: doc.id, mime: doc.mime }, 'unreadable document type');
+    return undefined;
+  }
+  if (mime !== doc.mime) await db.document.update({ where: { id: doc.id }, data: { mime } });
+  const prepared = mime === 'application/pdf' ? preparePdf(file.body) : { pages: 1, text: '' };
   const ctx = erpContext(tenant);
   const currency = tenant.currency as Currency;
-  const { extraction: x, usage } = await c.ai.vision.extract({
-    content: file.body,
-    mime: doc.mime,
-    pdfText: prepared.text || undefined,
-    country: tenant.country,
-    currency,
-  });
+  let x: Extraction;
+  let usage = { tokens: 0, costMicros: 0 };
+  let unreadable: string | undefined;
+  try {
+    ({ extraction: x, usage } = await c.ai.vision.extract({ content: file.body, mime, pdfText: prepared.text || undefined, country: tenant.country, currency }));
+  } catch (err) {
+    if (isTransient(err)) throw err; // BullMQ retries with backoff
+    // Unreadable (blurry, refused, bad output): never drop the bill – a human enters it from the review queue.
+    unreadable = (err as Error).message.slice(0, 200);
+    logger.warn({ tenantId: tenant.id, documentId: doc.id, err: unreadable }, 'vision extraction failed; sending to review');
+    x = {
+      docType: 'other', supplierName: null, supplierTaxId: null, invoiceNo: null, date: null, currency, lines: [], subtotal: null,
+      tax: { cgst: 0, sgst: 0, igst: 0, vat: 0 }, total: null, paymentMode: 'unknown', confidence: 0,
+    };
+  }
   await incrementUsage(c.prisma, tenant.id, { ocrPages: prepared.pages, aiTokens: usage.tokens, aiCostMicros: usage.costMicros });
   await db.document.update({
     where: { id: doc.id },
@@ -117,7 +160,7 @@ export async function processOcr(c: Container, job: OcrJob) {
   taxTemplate ??= purchaseTaxTemplate(ctx, taxes);
 
   // Duplicate: same supplier + invoice no + amount already drafted (and not cancelled).
-  const issues = [...v.issues];
+  const issues = [...v.issues, ...(unreadable ? ['Could not be read automatically – please enter it from the image'] : [])];
   let duplicate = false;
   if (partyName && x.invoiceNo && x.total) {
     const candidates = await db.draft.findMany({ where: { tenantId: tenant.id, status: { notIn: ['cancelled'] }, type }, take: 200, orderBy: { createdAt: 'desc' } });

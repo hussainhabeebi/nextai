@@ -6,7 +6,7 @@ import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { audit } from '../audit/audit.js';
-import { DOCTYPE_FOR, erpContext, partyDoc, toErpDoc } from '../erpnext/mappers.js';
+import { DOCTYPE_FOR, applyTaxTemplate, erpContext, partyDoc, resolveAccounts, toErpDoc } from '../erpnext/mappers.js';
 
 export interface Actor {
   id?: string | null;
@@ -202,7 +202,11 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
 
     let erpName = draft.erpName;
     if (!erpName) {
-      const created = await erp.create(doctype, toErpDoc(draft.type, p, ctx));
+      const body = toErpDoc(draft.type, p, ctx);
+      const swapped = await resolveAccounts(erp, ctx, body, tenantId);
+      await applyTaxTemplate(erp, body);
+      if (p.expenseAccount && swapped[p.expenseAccount]) p.expenseAccount = swapped[p.expenseAccount]; // learn the real ledger
+      const created = await erp.create(doctype, body);
       erpName = created.name as string;
       await db.draft.update({ where: { id: draftId }, data: { erpDoctype: doctype, erpName } });
     }
@@ -212,8 +216,13 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
     if (draft.documentId) {
       const doc = await db.document.findUnique({ where: { id: draft.documentId } });
       if (doc) {
-        const obj = await c.storage.get(tenantId, doc.r2Key);
-        await erp.uploadFile({ filename: doc.r2Key.split('/').pop()!, content: obj.body, mime: doc.mime }, { doctype, name: erpName }, true);
+        // The entry is already submitted: a failed attachment must not mark it failed or re-post it.
+        try {
+          const obj = await c.storage.get(tenantId, doc.r2Key);
+          await erp.uploadFile({ filename: doc.r2Key.split('/').pop()!, content: obj.body, mime: doc.mime }, { doctype, name: erpName }, true);
+        } catch (err) {
+          logger.warn({ tenantId, draftId, erpName, err: (err as Error).message }, 'bill attachment upload failed');
+        }
       }
     }
     const posted = await db.draft.update({ where: { id: draftId }, data: { status: 'posted', error: null } });

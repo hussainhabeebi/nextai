@@ -68,7 +68,7 @@ describe('payments', () => {
     await drain(c);
     const erp = c.erps.get(A.tenant.id)!;
     const pe = [...erp.docs.get('Payment Entry')!.values()][0]!;
-    expect(pe).toMatchObject({ payment_type: 'Receive', party_type: 'Customer', party: 'Ravi Traders', paid_amount: 2000, docstatus: 1, paid_to: 'Bank Accounts - AIL' });
+    expect(pe).toMatchObject({ payment_type: 'Receive', party_type: 'Customer', party: 'Ravi Traders', paid_amount: 2000, docstatus: 1, paid_to: 'Bank Account - AIL' }); // the ledger, not the 'Bank Accounts' group
     expect(await sendReceipt(c, { tenantId: A.tenant.id, paymentName: pe.name as string })).toEqual({ sent: true });
     expect(c.cws.get(A.tenant.id)!.sent.some((m) => m.template?.name === 'nextai_receipt')).toBe(true);
   });

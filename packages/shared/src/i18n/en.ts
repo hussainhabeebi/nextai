@@ -39,6 +39,7 @@ export const en = {
   'bot.unknownNumber': 'This number is not registered with NextAi. Visit {url} to sign up.',
   'bot.received': 'Got it 👍 Reading your document…',
   'bot.duplicate': 'This document was already recorded ({ref}).',
+  'bot.unsupportedFile': 'I can’t read this file type. Please send the bill as a photo (JPG or PNG) or a PDF.',
   'bot.draftSummary': '{type}\n{party}\nDate: {date}\nTotal: {total}\n\nReply 1 Confirm · 2 Edit · 3 Cancel',
   'bot.confirmed': 'Posted ✅ {ref}',
   'bot.cancelled': 'Cancelled. Nothing was recorded.',

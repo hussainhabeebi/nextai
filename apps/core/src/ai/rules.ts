@@ -1,18 +1,33 @@
 import type { IntentResult } from '@nextai/shared';
 
+const MODES: Record<string, string> = {
+  cash: 'cash', bank: 'bank', 'bank transfer': 'bank', transfer: 'bank', cheque: 'bank', check: 'bank', neft: 'bank', imps: 'bank', rtgs: 'bank',
+  card: 'card', 'credit card': 'card', 'debit card': 'card', upi: 'upi', gpay: 'upi', phonepe: 'upi', paytm: 'upi', credit: 'credit',
+};
+const MODE_RE = /\b(?:by|via|through|thru|using|in|with)\s+(bank transfer|credit card|debit card|cash|bank|transfer|cheque|check|neft|imps|rtgs|card|upi|gpay|phonepe|paytm|credit)\b/;
+
 /**
  * Deterministic, zero-cost intent classifier used before the LLM. Handles the common
  * short phrasings ("paid 500 for tea", "Ravi paid 2000", "sold 5000 to Ravi", "report p&l").
  * Returns undefined when unsure so the caller can fall back to the LLM.
  */
 export function ruleClassify(text: string): IntentResult | undefined {
-  const t = text.trim().toLowerCase();
-  const amountMatch = t.match(/(?:rs\.?|₹|inr|aed|dhs?)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|l|lakh)?/i);
+  const raw = text.trim().toLowerCase();
+  // "by bank" / "via upi" / "using card" → payment mode; removed so it doesn't end up in party names.
+  const modeMatch = raw.match(MODE_RE);
+  const paymentMode = modeMatch ? MODES[modeMatch[1]!.replace(/\s+/g, ' ')] : undefined;
+  const t = modeMatch ? raw.replace(MODE_RE, ' ').replace(/\s+/g, ' ').trim() : raw;
+  // Prefer the number right after the verb ("Shop 24 paid 2000" → 2000), else the first number.
+  const NUM = String.raw`(?:rs\.?|₹|inr|aed|dhs?)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|l|lakh)?\b`;
+  const amountMatch =
+    t.match(new RegExp(String.raw`\b(?:paid|sent|transferred|spent|sold|bought|purchased|received|sale|invoice)\s+(?:me\s+|us\s+)?` + NUM)) ??
+    t.match(new RegExp(NUM));
   const amount = amountMatch
     ? Number(amountMatch[1]!.replace(/,/g, '')) *
       (amountMatch[2] === 'k' ? 1e3 : amountMatch[2] === 'l' || amountMatch[2] === 'lakh' ? 1e5 : 1)
     : undefined;
-  const currency = /aed|dhs?|dirham/.test(t) ? ('AED' as const) : /rs|₹|inr|rupee/.test(t) ? ('INR' as const) : undefined;
+  // Whole words only: "Traders" must not read as "rs", "Siddharth" not as "dh".
+  const currency = /\b(aed|dhs?|dirhams?)\b/.test(t) ? ('AED' as const) : /₹|\b(rs\.?|inr|rupees?)(?=\s|\d|$)/.test(t) ? ('INR' as const) : undefined;
 
   if (/^(help|menu|hi|hello|start|\?)$/.test(t)) return { intent: 'help', confidence: 0.95, entities: {} };
 
@@ -32,21 +47,21 @@ export function ruleClassify(text: string): IntentResult | undefined {
   // "<party> paid 2000" → payment_in
   const pin = t.match(/^([a-z][\w .&-]{1,40}?)\s+(?:paid|sent|transferred)\s+(?:me\s+)?/);
   if (pin && amount && !/^(i|we)\b/.test(pin[1]!)) {
-    return { intent: 'payment_in', confidence: 0.85, entities: { amount, currency, party: titleCase(pin[1]!) } };
+    return { intent: 'payment_in', confidence: 0.85, entities: { amount, currency, paymentMode, party: titleCase(pin[1]!) } };
   }
 
   // "paid 15000 rent" / "paid 500 for tea" / "spent 200 on fuel" → expense or supplier payment
   if (/^(i |we )?(paid|spent|bought|purchased)\b/.test(t) && amount) {
     const to = t.match(/\bto\s+([a-z][\w .&-]{1,40})$/)?.[1];
-    if (to) return { intent: 'payment_out', confidence: 0.8, entities: { amount, currency, party: titleCase(to) } };
+    if (to) return { intent: 'payment_out', confidence: 0.8, entities: { amount, currency, paymentMode, party: titleCase(to) } };
     const desc = t.match(/\b(?:for|on)\s+(.+)$/)?.[1] ?? t.replace(/^(i |we )?(paid|spent|bought|purchased)\s+/, '').replace(/[\d,.]+\s*(k|l)?/, '').trim();
-    return { intent: 'record_expense', confidence: 0.85, entities: { amount, currency, description: desc || undefined } };
+    return { intent: 'record_expense', confidence: 0.85, entities: { amount, currency, paymentMode, description: desc || undefined } };
   }
 
   // "sold 5000 to ravi" / "sale 5000 ravi"
   const sale = t.match(/^(?:sold|sale|invoice|bill)\b.*?\bto\s+([a-z][\w .&-]{1,40})$/);
   if (/^(sold|sale|invoice)\b/.test(t) && amount) {
-    return { intent: 'record_sale', confidence: sale ? 0.85 : 0.7, entities: { amount, currency, party: sale ? titleCase(sale[1]!) : undefined } };
+    return { intent: 'record_sale', confidence: sale ? 0.85 : 0.7, entities: { amount, currency, paymentMode, party: sale ? titleCase(sale[1]!) : undefined } };
   }
 
   if (/^(add|new)\s+(customer|supplier|party|vendor)\b/.test(t)) {
