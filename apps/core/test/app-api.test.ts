@@ -17,6 +17,11 @@ let staffA: string;
 beforeAll(async () => {
   await seed(c.prisma);
   A = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } });
+  // Like a real site with India Compliance: the GST purchase template exists.
+  await (c.erp(A.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> }).create(
+    'Purchase Taxes and Charges Template',
+    { name: 'Input GST In-state - AIL', taxes: [{ charge_type: 'On Net Total', account_head: 'Input Tax CGST - AIL', rate: 9, add_deduct_tax: 'Add', category: 'Total' }] },
+  );
   B = await createTenant(c.prisma);
   app = await buildApp(c);
   tokA = await signAccess({ sub: A.owner.id, tid: A.tenant.id, role: 'owner', typ: 'app' });

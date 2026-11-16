@@ -20,6 +20,9 @@ import { emailDailySummary, reportRecipients, sendAdminDailyReport } from '../..
 import { summaryFigures } from '../../modules/outbound/jobs.js';
 import { sendWhatsApp } from '../../modules/outbound/whatsapp.js';
 import { runProvisionStep } from '../../modules/provisioning/wizard.js';
+import { clearAccountCache } from '../../modules/erpnext/mappers.js';
+import { sealErpKey, sealErpSecret } from '../../modules/tenants/secrets.js';
+import { ErpError } from '@nextai/erpnext-client';
 import { R2Storage } from '../../storage/storage.js';
 
 const uuidParam = z.object({ id: z.string().uuid() });
@@ -34,6 +37,8 @@ async function upstream<T>(f: () => Promise<T>): Promise<T> {
     if (err instanceof ChatwootAdminError) throw badRequest(err.message);
     if ((err as Error).name === 'MailError') throw badRequest((err as Error).message);
     if ((err as Error).name === 'TimeoutError') throw badRequest('Upstream timed out');
+    if (err instanceof ErpError) throw badRequest(`ERPNext: ${err.userMessage}`);
+    if (err instanceof TypeError && /fetch/i.test(err.message)) throw badRequest('Could not reach the server (check the URL)');
     throw err;
   }
 }
@@ -84,6 +89,8 @@ export const integrationRoutes =
             cwAccountId: true,
             cwInboxId: true,
             cwBotTokenEnc: true,
+            erpSiteUrl: true,
+            erpApiKeyEnc: true,
             settings: true,
             users: { where: { role: 'owner' }, select: { name: true, phone: true, email: true } },
           },
@@ -119,12 +126,81 @@ export const integrationRoutes =
             slug: tn.slug,
             status: tn.status,
             chatwoot: { connected: !!tn.cwBotTokenEnc, accountId: tn.cwAccountId, inboxId: tn.cwInboxId },
+            erpnext: {
+              connected: !!tn.erpApiKeyEnc,
+              siteUrl: tn.erpSiteUrl,
+              company: s.success ? (s.data.erpCompany ?? null) : null,
+              abbr: s.success ? (s.data.companyAbbr ?? null) : null,
+            },
             owner: owner ? { name: owner.name, phone: owner.phone, email: owner.email } : null,
             emailReports: s.success ? s.data.emailReports : { enabled: true, recipients: [] },
           };
         }),
       };
     });
+
+    // ---------------- ERPNext ----------------
+    /**
+     * Connect an existing ERPNext site (no provisioner needed): verify the API key, pick the company and store the
+     * credentials encrypted. Without `company`, a site with several companies returns the list to choose from.
+     */
+    app.post(
+      '/tenants/:id/erpnext/connect',
+      {
+        ...superOnly,
+        schema: {
+          tags: ['admin'],
+          params: uuidParam,
+          body: z.object({
+            siteUrl: z.string().url(),
+            apiKey: z.string().min(5),
+            apiSecret: z.string().min(5),
+            company: z.string().min(1).optional(),
+          }),
+        },
+      },
+      async (req) => {
+        const tenant = await loadTenant(req.params.id);
+        const b = req.body;
+        const siteUrl = b.siteUrl.replace(/\/+$/, '');
+        const candidate = { ...tenant, erpSiteUrl: siteUrl, erpApiKeyEnc: sealErpKey(tenant.id, b.apiKey), erpApiSecretEnc: sealErpSecret(tenant.id, b.apiSecret) };
+        const erp = c.erp(candidate);
+        const ping = await erp.ping();
+        if (!ping.ok) throw badRequest('Could not log in to ERPNext with this URL and API key/secret');
+        const companies = await upstream(() =>
+          erp.list<{ name: string; abbr: string; default_currency?: string; country?: string }>('Company', {
+            fields: ['name', 'abbr', 'default_currency', 'country'],
+            limit: 100,
+          }),
+        );
+        if (companies.length === 0) throw badRequest('This ERPNext site has no company yet: finish the ERPNext setup wizard first');
+        const chosen = b.company ? companies.find((co) => co.name === b.company) : companies.length === 1 ? companies[0] : undefined;
+        if (b.company && !chosen) throw badRequest(`Company "${b.company}" not found on this site`);
+        if (!chosen) return { ok: false, needsCompany: true, companies: companies.map((co) => ({ name: co.name, abbr: co.abbr, currency: co.default_currency })) };
+
+        const warnings: string[] = [];
+        if (chosen.default_currency && chosen.default_currency !== tenant.currency)
+          warnings.push(`Company currency is ${chosen.default_currency} but the business is set to ${tenant.currency}`);
+        const fy = await upstream(() => erp.list('Fiscal Year', { fields: ['name'], limit: 1 }));
+        if (fy.length === 0) warnings.push('No Fiscal Year found: entries will be rejected until one exists');
+
+        const settings = tenantSettingsSchema.parse({ ...((tenant.settings ?? {}) as object), erpCompany: chosen.name, companyAbbr: chosen.abbr });
+        await sys((tx) =>
+          tx.tenant.update({
+            where: { id: tenant.id },
+            data: {
+              erpSiteUrl: siteUrl,
+              erpApiKeyEnc: candidate.erpApiKeyEnc,
+              erpApiSecretEnc: candidate.erpApiSecretEnc,
+              settings: settings as Prisma.InputJsonValue,
+            },
+          }),
+        );
+        clearAccountCache(tenant.id);
+        await adminAudit(req, 'erpnext.connect', tenant.id, { siteUrl, company: chosen.name, abbr: chosen.abbr, user: ping.user }, tenant.id);
+        return { ok: true, siteUrl, company: chosen.name, abbr: chosen.abbr, user: ping.user, latencyMs: ping.latencyMs, warnings };
+      },
+    );
 
     // ---------------- Chatwoot ----------------
     app.post(

@@ -228,4 +228,37 @@ describe('connectInbox (Chatwoot one-click)', () => {
     );
     expect(calls.find((x) => x.url.endsWith('/inboxes/55/set_agent_bot'))!.body).toEqual({ agent_bot: 9 });
   });
+
+  it('connects an existing ERPNext site: asks for the company, then stores encrypted credentials', async () => {
+    const erp = c.erp(B.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    await erp.create('Company', { name: 'Bee Trading LLC', abbr: 'BTL', default_currency: B.tenant.currency });
+    await erp.create('Company', { name: 'Bee Holdings', abbr: 'BH', default_currency: 'USD' });
+    const url = `/admin/v1/tenants/${B.tenant.id}/erpnext/connect`;
+    const body = { siteUrl: 'https://books.example.com/', apiKey: 'key-12345', apiSecret: 'secret-12345' };
+
+    const denied = await app.inject({ method: 'POST', url, headers: await h('support'), payload: body });
+    expect(denied.statusCode).toBe(403);
+
+    const ask = await app.inject({ method: 'POST', url, headers: await h('super_admin'), payload: body });
+    expect(ask.statusCode).toBe(200);
+    expect(ask.json()).toMatchObject({ ok: false, needsCompany: true });
+    expect(ask.json().companies.map((x: { name: string }) => x.name).sort()).toEqual(['Bee Holdings', 'Bee Trading LLC']);
+
+    const ok = await app.inject({ method: 'POST', url, headers: await h('super_admin'), payload: { ...body, company: 'Bee Trading LLC' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ ok: true, company: 'Bee Trading LLC', abbr: 'BTL', siteUrl: 'https://books.example.com' });
+    expect(ok.json().warnings).toContain('No Fiscal Year found: entries will be rejected until one exists');
+
+    const saved = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: B.tenant.id } }));
+    expect(saved.erpSiteUrl).toBe('https://books.example.com');
+    expect(decrypt(saved.erpApiKeyEnc!, `erp_key:${B.tenant.id}`)).toBe('key-12345');
+    expect(saved.settings).toMatchObject({ erpCompany: 'Bee Trading LLC', companyAbbr: 'BTL' });
+
+    const missing = await app.inject({ method: 'POST', url, headers: await h('super_admin'), payload: { ...body, company: 'Nope' } });
+    expect(missing.statusCode).toBe(400);
+
+    const list = await app.inject({ method: 'GET', url: '/admin/v1/integrations', headers: await h('super_admin') });
+    expect(JSON.stringify(list.json())).not.toContain('key-12345');
+    expect(list.json().tenants.find((t: { id: string }) => t.id === B.tenant.id).erpnext).toMatchObject({ connected: true, company: 'Bee Trading LLC', abbr: 'BTL' });
+  });
 });

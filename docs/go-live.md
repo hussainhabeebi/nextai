@@ -66,6 +66,30 @@ Hostnames: API `api.nextaierp.com`, app + admin `app.nextaierp.com`, Chatwoot `a
 
 ---
 
+## 1b. Connect ERPNext (10 min per business)
+
+Entries confirmed on WhatsApp or in the app are posted to the business's ERPNext company. Either provision a new
+site (Admin → **Provision**, needs the provisioner on the ERPNext host) or connect an existing one:
+
+1. In ERPNext, finish the setup wizard (company, fiscal year, chart of accounts). For India, install
+   **India Compliance** so the GST tax templates (`Input GST In-state - ABBR`, …) exist.
+2. Create an API user (role **Accounts Manager**, or System Manager), then User → Settings → **API Access → Generate Keys**.
+3. Admin → **Integrations** → open the business → **ERPNext (books)**: site URL, API key, API secret → **Connect ERPNext**.
+   If the site has several companies, pick one and connect again. Warnings (currency mismatch, no fiscal year) are shown.
+
+NextAi checks every account against the company's chart before posting: a missing or group account is replaced by the
+company's own bank / cash / expense / income ledger, and tax rows are copied from the tax template (ERPNext does not
+do that for API inserts). A missing tax template sends the entry to review with the template name.
+
+Live check against a real site (all entry types, posted and submitted):
+
+```bash
+ERPNEXT_TEST_URL=https://books.example.com ERPNEXT_TEST_KEY=... ERPNEXT_TEST_SECRET=... \
+ERPNEXT_TEST_COMPANY="Your Company" ERPNEXT_TEST_ABBR=YC pnpm --filter @nextai/core test erpnext-live
+```
+
+This creates real (test) documents in that company: use a test site or company.
+
 ## 2. WhatsApp via Chatwoot (`app.aiingo.com`) (20–30 min per number)
 
 You need, per business (tenant): a **WhatsApp inbox** in Chatwoot, its **Account ID** and **Inbox ID**, and a

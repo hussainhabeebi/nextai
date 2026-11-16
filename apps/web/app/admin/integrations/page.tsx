@@ -15,6 +15,7 @@ type TenantRow = {
   slug: string;
   status: string;
   chatwoot: { connected: boolean; accountId: number | null; inboxId: number | null };
+  erpnext: { connected: boolean; siteUrl: string | null; company: string | null; abbr: string | null };
   owner: { name: string; phone: string | null; email: string | null } | null;
   emailReports: { enabled: boolean; recipients: string[] };
 };
@@ -67,6 +68,8 @@ function TenantPanel({ t, canConnect, onSaved }: { t: TenantRow; canConnect: boo
     botToken: '',
   });
   const [inboxes, setInboxes] = useState<Inbox[] | null>(null);
+  const [erp, setErp] = useState({ siteUrl: t.erpnext.connected ? (t.erpnext.siteUrl ?? '') : '', apiKey: '', apiSecret: '', company: '' });
+  const [companies, setCompanies] = useState<Array<{ name: string; abbr: string; currency?: string }> | null>(null);
   const [phone, setPhone] = useState(t.owner?.phone ?? '');
   const [recipients, setRecipients] = useState(t.emailReports.recipients.join(', '));
   const [enabled, setEnabled] = useState(t.emailReports.enabled);
@@ -93,6 +96,9 @@ function TenantPanel({ t, canConnect, onSaved }: { t: TenantRow; canConnect: boo
         <span className="text-xs text-muted">{t.slug}</span>
         <Badge tone={t.chatwoot.connected ? 'green' : 'amber'}>
           {t.chatwoot.connected ? `WhatsApp inbox ${t.chatwoot.inboxId}` : 'WhatsApp not connected'}
+        </Badge>
+        <Badge tone={t.erpnext.connected ? 'green' : 'amber'}>
+          {t.erpnext.connected ? `ERPNext: ${t.erpnext.company ?? 'connected'}` : 'ERPNext not connected'}
         </Badge>
         <Badge tone={t.emailReports.enabled ? 'green' : 'neutral'}>
           {t.emailReports.enabled ? 'Email reports on' : 'Email reports off'}
@@ -277,6 +283,84 @@ function TenantPanel({ t, canConnect, onSaved }: { t: TenantRow; canConnect: boo
               <Result r={res.verify ?? null} />
               <Result r={res.test ?? null} />
             </div>
+          )}
+        </section>
+
+        <section>
+          <h3 className="mb-2 font-semibold">ERPNext (books)</h3>
+          {t.erpnext.connected && (
+            <p className="mb-2 text-sm text-muted">
+              Connected to {t.erpnext.siteUrl} · company {t.erpnext.company} ({t.erpnext.abbr}). Entries confirmed on
+              WhatsApp or in the app are posted here.
+            </p>
+          )}
+          {canConnect ? (
+            <>
+              <p className="mb-2 text-sm text-muted">
+                Connect an existing ERPNext site. In ERPNext: User → (an API user with Accounts Manager role) →
+                Settings → API Access → Generate Keys.
+              </p>
+              <div className="grid gap-2">
+                <Field label="Site URL" hint="e.g. https://books.example.com">
+                  <Input value={erp.siteUrl} onChange={(e) => setErp({ ...erp, siteUrl: e.target.value })} placeholder="https://" />
+                </Field>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Field label="API key">
+                    <Input value={erp.apiKey} onChange={(e) => setErp({ ...erp, apiKey: e.target.value })} autoComplete="off" />
+                  </Field>
+                  <Field label="API secret" hint="Stored encrypted.">
+                    <Input type="password" value={erp.apiSecret} onChange={(e) => setErp({ ...erp, apiSecret: e.target.value })} autoComplete="off" />
+                  </Field>
+                </div>
+                {companies && (
+                  <Field label="Company" hint="This site has several companies: choose the one for this business.">
+                    <select
+                      className="min-h-12 w-full rounded-xl border border-line bg-card px-3 text-base text-fg"
+                      value={erp.company}
+                      onChange={(e) => setErp({ ...erp, company: e.target.value })}
+                    >
+                      <option value="">Choose…</option>
+                      {companies.map((co) => (
+                        <option key={co.name} value={co.name}>
+                          {co.name} ({co.abbr}{co.currency ? `, ${co.currency}` : ''})
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  disabled={!erp.siteUrl || !erp.apiKey || !erp.apiSecret || (!!companies && !erp.company) || !!busy}
+                  onClick={() =>
+                    act('erp', async () => {
+                      const r = await adminApi.post<{
+                        ok: boolean;
+                        needsCompany?: boolean;
+                        companies?: Array<{ name: string; abbr: string; currency?: string }>;
+                        company?: string;
+                        abbr?: string;
+                        user?: string;
+                        warnings?: string[];
+                      }>(`/admin/v1/tenants/${t.id}/erpnext/connect`, { ...erp, company: erp.company || undefined });
+                      if (r.needsCompany) {
+                        setCompanies(r.companies ?? []);
+                        return 'Signed in. Choose the company, then Connect again.';
+                      }
+                      setErp({ ...erp, apiKey: '', apiSecret: '' });
+                      setCompanies(null);
+                      onSaved();
+                      return [`Connected to ${r.company} (${r.abbr}) as ${r.user}.`, ...(r.warnings ?? [])].join(' ');
+                    })
+                  }
+                >
+                  {t.erpnext.connected ? 'Reconnect' : 'Connect ERPNext'}
+                </Button>
+              </div>
+              <Result r={res.erp ?? null} />
+            </>
+          ) : (
+            !t.erpnext.connected && <p className="text-sm text-muted">Ask a super admin to connect ERPNext.</p>
           )}
         </section>
 

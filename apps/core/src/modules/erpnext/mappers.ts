@@ -1,3 +1,4 @@
+import { ErpError, type ErpClient } from '@nextai/erpnext-client';
 import { tenantSettingsSchema, type DraftPayload, type DraftType, type TenantSettings } from '@nextai/shared';
 import type { Tenant } from '@prisma/client';
 
@@ -29,7 +30,7 @@ export function account(ctx: ErpContext, key: string): string {
   if (override) return override;
   const base: Record<string, string> = {
     cash: 'Cash',
-    bank: ctx.settings.defaultBankAccount ?? 'Bank Accounts',
+    bank: ctx.settings.defaultBankAccount ?? 'Bank Account', // leaf; 'Bank Accounts' is the group
     misc_expense: 'Miscellaneous Expenses',
     sales: 'Sales',
     receivable: 'Debtors',
@@ -45,7 +46,7 @@ export function guessExpenseAccount(ctx: ErpContext, description = ''): string {
   const rules: Array<[RegExp, string]> = [
     [/tea|coffee|food|lunch|dinner|snack|meal|chai/, 'Entertainment Expenses'],
     [/petrol|diesel|fuel|taxi|uber|ola|cab|travel|bus|train|flight|careem/, 'Travel Expenses'],
-    [/rent/, 'Rent'],
+    [/\brent\b/, 'Office Rent'],
     [/electric|power|water|kseb|dewa|internet|wifi|phone|mobile|recharge/, 'Utility Expenses'],
     [/salary|wage|staff pay/, 'Salary'],
     [/stationery|paper|pen|printer|office/, 'Office Maintenance Expenses'],
@@ -130,8 +131,9 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         voucher_type: isCash(p.paymentMode) ? 'Cash Entry' : 'Bank Entry',
         company: ctx.company,
         posting_date: p.date,
-        cheque_no: p.referenceNo,
-        cheque_date: p.referenceNo ? p.date : undefined,
+        // ERPNext requires a reference on Bank Entries.
+        cheque_no: p.referenceNo ?? (isCash(p.paymentMode) ? undefined : `NX-${p.documentId?.slice(0, 8) ?? Date.now()}`),
+        cheque_date: p.referenceNo || !isCash(p.paymentMode) ? p.date : undefined,
         user_remark: remarks ?? lines.map((l) => l.description).join(', '),
         accounts: [
           { account: expense, debit_in_account_currency: p.total, credit_in_account_currency: 0 },
@@ -204,4 +206,106 @@ export function partyDoc(kind: 'Customer' | 'Supplier', name: string, extra: { t
         mobile_no: extra.phone,
         ...(extra.country === 'IN' && extra.taxId ? { gstin: extra.taxId } : {}),
       };
+}
+
+type AccountRole = 'bank' | 'cash' | 'expense' | 'income';
+const accountCache = new Map<string, { at: number; ok: Set<string>; fallback: Partial<Record<AccountRole, string>> }>();
+
+/**
+ * Make sure every account in an ERPNext document body exists in the company and is a ledger (not a group);
+ * otherwise substitute the company's own bank / cash / expense / income ledger. Charts differ between sites
+ * (custom charts, India Compliance, renamed accounts), so names guessed from the standard chart are only hints.
+ * Mutates and returns the body; the substitutions are returned so callers can keep the draft in sync.
+ */
+export async function resolveAccounts(
+  erp: Pick<ErpClient, 'list'>,
+  ctx: ErpContext,
+  body: Record<string, unknown>,
+  cacheKey: string = ctx.company, // pass the tenant id: company names can repeat across ERPNext sites
+): Promise<Record<string, string>> {
+  const key = `${cacheKey}:${ctx.company}`;
+  let cache = accountCache.get(key);
+  if (!cache || Date.now() - cache.at > 10 * 60_000) {
+    const rows = await erp.list<{ name: string; is_group: number; account_type?: string; root_type?: string }>('Account', {
+      filters: [['company', '=', ctx.company]],
+      fields: ['name', 'is_group', 'account_type', 'root_type'],
+      limit: 5000,
+    });
+    const leaves = rows.filter((r) => !r.is_group);
+    const pick = (pred: (r: (typeof leaves)[number]) => boolean, preferred?: string) =>
+      (preferred && leaves.find((r) => r.name === preferred)?.name) ?? leaves.find(pred)?.name;
+    cache = {
+      at: Date.now(),
+      ok: new Set(leaves.map((r) => r.name)),
+      fallback: {
+        bank: pick((r) => r.account_type === 'Bank', ctx.settings.defaultBankAccount),
+        cash: pick((r) => r.account_type === 'Cash', `Cash - ${ctx.abbr}`),
+        expense: pick((r) => r.root_type === 'Expense' && !r.account_type, `Miscellaneous Expenses - ${ctx.abbr}`),
+        income: pick((r) => r.root_type === 'Income', `Sales - ${ctx.abbr}`),
+      },
+    };
+    accountCache.set(key, cache);
+  }
+  const changed: Record<string, string> = {};
+  const fix = (name: unknown, role: AccountRole): unknown => {
+    if (typeof name !== 'string' || !name || cache!.ok.has(name)) return name;
+    const sub = cache!.fallback[role];
+    if (!sub) return name; // nothing better known: let ERPNext report it
+    changed[name] = sub;
+    return sub;
+  };
+  const roleOfCashBank = (name: unknown) => (typeof name === 'string' && /cash/i.test(name) ? 'cash' : 'bank');
+  for (const item of (body.items as Array<Record<string, unknown>> | undefined) ?? []) {
+    if ('expense_account' in item) item.expense_account = fix(item.expense_account, 'expense');
+    if ('income_account' in item) item.income_account = fix(item.income_account, 'income');
+  }
+  if ('cash_bank_account' in body) body.cash_bank_account = fix(body.cash_bank_account, roleOfCashBank(body.cash_bank_account));
+  if ('paid_from' in body) body.paid_from = fix(body.paid_from, roleOfCashBank(body.paid_from));
+  if ('paid_to' in body) body.paid_to = fix(body.paid_to, roleOfCashBank(body.paid_to));
+  const rows = (body.accounts as Array<Record<string, unknown>> | undefined) ?? [];
+  rows.forEach((row, i) => {
+    // Journal Entry: first row is the expense (debit), second the cash/bank (credit) — see toErpDoc.
+    row.account = fix(row.account, i === 0 ? 'expense' : roleOfCashBank(row.account));
+  });
+  return changed;
+}
+
+/** Forget a cached chart of accounts (after reconnecting a tenant to another site/company), or all of them. */
+export function clearAccountCache(cacheKey?: string) {
+  if (!cacheKey) return accountCache.clear();
+  for (const k of accountCache.keys()) if (k.startsWith(`${cacheKey}:`)) accountCache.delete(k);
+}
+
+const TAX_TEMPLATE_DOCTYPE: Record<string, string> = {
+  'Purchase Invoice': 'Purchase Taxes and Charges Template',
+  'Sales Invoice': 'Sales Taxes and Charges Template',
+};
+
+/**
+ * ERPNext fills tax rows from `taxes_and_charges` only in the desk UI, not on API inserts, so a bill posted with
+ * just the template name loses its VAT/GST. Copy the template's rows onto the document explicitly.
+ */
+export async function applyTaxTemplate(erp: Pick<ErpClient, 'get'>, body: Record<string, unknown>): Promise<void> {
+  const name = body.taxes_and_charges;
+  const doctype = TAX_TEMPLATE_DOCTYPE[body.doctype as string];
+  if (typeof name !== 'string' || !name || !doctype || (Array.isArray(body.taxes) && body.taxes.length)) return;
+  let tpl: Record<string, unknown>;
+  try {
+    tpl = await erp.get(doctype, name);
+  } catch (err) {
+    if (err instanceof ErpError && err.status === 404) {
+      throw new ErpError(
+        `missing ${doctype} ${name}`,
+        404,
+        'DoesNotExistError',
+        `Tax template "${name}" does not exist in ERPNext. Create it there, or set the business's tax template names.`,
+        false,
+      );
+    }
+    throw err;
+  }
+  const keep = ['category', 'add_deduct_tax', 'charge_type', 'row_id', 'account_head', 'description', 'rate', 'cost_center', 'included_in_print_rate', 'tax_amount'];
+  body.taxes = ((tpl.taxes as Array<Record<string, unknown>> | undefined) ?? []).map((row) =>
+    Object.fromEntries(keep.filter((k) => row[k] !== undefined && row[k] !== null).map((k) => [k, row[k]])),
+  );
 }

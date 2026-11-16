@@ -4,7 +4,7 @@ import { seed } from '../prisma/seed.js';
 import { buildApp } from '../src/app.js';
 import { tenantDb } from '../src/lib/db.js';
 import { postDraft } from '../src/modules/drafts/service.js';
-import { preparePdf } from '../src/modules/ocr/pipeline.js';
+import { preparePdf, processOcr, sniffMime } from '../src/modules/ocr/pipeline.js';
 import { validateExtraction } from '../src/modules/ocr/validate.js';
 import { similarity } from '../src/modules/ocr/match.js';
 import { closeShared, createTenant, drain, extractionBytes, testContainer } from './helpers.js';
@@ -21,6 +21,15 @@ beforeAll(async () => {
   await seed(c.prisma);
   A = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } });
   B = await createTenant(c.prisma);
+  // Like a real site with India Compliance: GST templates exist and carry the tax rows.
+  const erpA = c.erp(A.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+  await erpA.create('Purchase Taxes and Charges Template', {
+    name: 'Input GST In-state - AIL',
+    taxes: [
+      { charge_type: 'On Net Total', account_head: 'Input Tax CGST - AIL', rate: 9, description: 'CGST', category: 'Total', add_deduct_tax: 'Add' },
+      { charge_type: 'On Net Total', account_head: 'Input Tax SGST - AIL', rate: 9, description: 'SGST', category: 'Total', add_deduct_tax: 'Add' },
+    ],
+  });
   app = await buildApp(c);
 });
 beforeEach(() => {
@@ -60,6 +69,11 @@ describe('OCR → draft → confirm → post', () => {
     const erp = c.erps.get(A.tenant.id)!;
     const pinv = erp.docs.get('Purchase Invoice')!.get(posted.erpName!)!;
     expect(pinv).toMatchObject({ docstatus: 1, supplier: 'Kerala Paper Mart Pvt Ltd', bill_no: 'KPM-1042', taxes_and_charges: 'Input GST In-state - AIL' });
+    // tax rows copied from the template (ERPNext does not do this for API inserts)
+    expect((pinv.taxes as Array<{ account_head: string; rate: number }>).map((t) => [t.account_head, t.rate])).toEqual([
+      ['Input Tax CGST - AIL', 9],
+      ['Input Tax SGST - AIL', 9],
+    ]);
     expect(erp.docs.get('Supplier')!.has('Kerala Paper Mart Pvt Ltd')).toBe(true); // auto-created after confirmation
     expect(erp.files[0]!.attachTo).toEqual({ doctype: 'Purchase Invoice', name: posted.erpName });
     expect(cw.lastText(id)).toMatch(/Posted ✅/);
@@ -68,6 +82,18 @@ describe('OCR → draft → confirm → post', () => {
     // re-running the job is a no-op (idempotent)
     await postDraft(c, A.tenant.id, draft.id);
     expect(erp.docs.get('Purchase Invoice')!.size).toBe(1);
+  });
+
+  it('a bill whose tax template is missing in ERPNext goes to review with a clear reason', async () => {
+    const id = ++conv;
+    await sendBill(extractionBytes({ invoiceNo: 'NO-TPL-1' }), id, B);
+    await drain(c);
+    const draft = (await tenantDb(c.prisma, B.tenant.id).draft.findFirst({ where: { conversationId: id } }))!;
+    await say('1', id, B);
+    await drain(c);
+    const after = await tenantDb(c.prisma, B.tenant.id).draft.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(after.status).toBe('needs_review');
+    expect(after.error).toMatch(/Tax template "Input GST In-state - .*" does not exist in ERPNext/);
   });
 
   it('uses the learned mapping for a fuzzy-matched supplier next time', async () => {
@@ -175,5 +201,48 @@ describe('ocr helpers', () => {
       Buffer.from('endstream\n'),
     ]);
     expect(preparePdf(pdf)).toEqual({ pages: 2, text: 'Invoice No 55' });
+  });
+});
+
+describe('unreadable bills are never dropped', () => {
+  it('detects the real file type from the bytes', () => {
+    expect(sniffMime(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), 'application/octet-stream')).toBe('image/jpeg');
+    expect(sniffMime(new TextEncoder().encode('%PDF-1.7'), 'image/jpeg')).toBe('application/pdf');
+    expect(sniffMime(new Uint8Array([1, 2, 3]), 'image/jpg')).toBe('image/jpeg');
+    expect(sniffMime(new TextEncoder().encode('\0\0\0\x18ftypheic'), 'image/heic')).toBeUndefined();
+  });
+
+  it('asks for a JPG/PDF when the file type cannot be read (e.g. HEIC)', async () => {
+    const id = ++conv;
+    const url = `https://app.aiingo.com/rails/active_storage/${Math.random()}.heic`;
+    c.chatwoot(A.tenant);
+    c.cws.get(A.tenant.id)!.attachments.set(url, { content: new TextEncoder().encode('\0\0\0\x18ftypheic....'), mime: 'image/heic' });
+    await postCw(app, cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, attachments: [{ file_type: 'image', data_url: url }], conversationId: id }));
+    await drain(c);
+    expect(c.cws.get(A.tenant.id)!.lastText(id)).toMatch(/JPG or PNG\) or a PDF/);
+    expect(await tenantDb(c.prisma, A.tenant.id).draft.findFirst({ where: { conversationId: id } })).toBeNull();
+  });
+
+  it('a bill the AI cannot read goes to review instead of disappearing; outages are retried', async () => {
+    const vision = c.ai.vision;
+    try {
+      c.ai.vision = { name: 'broken', extract: async () => Promise.reject(Object.assign(new Error('invalid image'), { status: 400 })) };
+      const id = ++conv;
+      await sendBill(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]), id);
+      await drain(c);
+      const draft = (await tenantDb(c.prisma, A.tenant.id).draft.findFirst({ where: { conversationId: id } }))!;
+      expect(draft.status).toBe('needs_review');
+      expect((draft.payload as { validationIssues: string[] }).validationIssues.join(' ')).toMatch(/Could not be read automatically/);
+      expect(c.cws.get(A.tenant.id)!.lastText(id)).toMatch(/accountant will double-check/);
+
+      c.ai.vision = { name: 'down', extract: async () => Promise.reject(Object.assign(new Error('overloaded'), { status: 529 })) };
+      const id2 = ++conv;
+      await sendBill(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 9]), id2);
+      const job = c.queue.jobs.find((j) => j.name === 'ocr.process')!;
+      c.queue.jobs = [];
+      await expect(processOcr(c, job.data as never)).rejects.toThrow('overloaded'); // left for BullMQ to retry
+    } finally {
+      c.ai.vision = vision;
+    }
   });
 });
