@@ -56,7 +56,7 @@ export function ruleClassify(text: string): IntentResult | undefined {
   const word = (w: string) => new RegExp(String.raw`(?<![a-z])(?:${w})(?![a-z])`).test(t);
   const currency = word('aed|dhs?|dirhams?')
     ? ('AED' as const)
-    : /₹/.test(t) || word('rs\.?|inr|rupees?')
+    : /₹/.test(t) || word(String.raw`rs\.?|inr|rupees?`)
       ? ('INR' as const)
       : /\$/.test(t) || word('usd|dollars?')
         ? ('USD' as const)

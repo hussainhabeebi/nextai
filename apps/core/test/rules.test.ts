@@ -36,6 +36,7 @@ describe('ruleClassify', () => {
     expect(ruleClassify('sold 2 lakh to Ravi')!.entities.amount).toBe(200000);
     expect(ruleClassify('paid rs500 for tea')!.entities).toMatchObject({ amount: 500, currency: 'INR' });
     expect(ruleClassify('paid $15 for domain')!.entities).toMatchObject({ amount: 15, currency: 'USD' });
+    expect(ruleClassify('paid 500 for rsvp cards')!.entities.currency).toBeUndefined(); // "rs" + any char is not rupees
   });
 
   it('parses day-first dates and rejects impossible ones', () => {
