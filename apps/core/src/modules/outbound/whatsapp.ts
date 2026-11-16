@@ -33,7 +33,12 @@ export async function sendWhatsApp(c: Container, tenant: Tenant, o: OutboundOpti
     let conversationId = o.conversationId;
     if (!conversationId) {
       const contact = await cw.findOrCreateContact(o.phone, o.name);
-      conversationId = (await cw.createConversation(contact.contactId, contact.sourceId)).conversationId;
+      // Reuse the contact's latest conversation in this inbox: Chatwoot applies the WhatsApp 24h window
+      // per conversation, so a fresh conversation can't send free text even right after the customer wrote.
+      const existing = await cw.findLatestConversation(contact.contactId).catch(() => null);
+      conversationId = existing
+        ? existing.conversationId
+        : (await cw.createConversation(contact.contactId, contact.sourceId)).conversationId;
     }
     if (tpl) {
       await cw.sendTemplate(conversationId, o.fallbackText, { name: tpl.name, language: tpl.language, category: tpl.category, params: o.params });
