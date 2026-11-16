@@ -27,7 +27,11 @@ export const chatwootWebhook =
       if (!ok) return reply.code(401).send({ error: 'invalid_signature' });
 
       const parsed = chatwootWebhookSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: 'invalid_payload' });
+      if (!parsed.success) {
+        // 200, not 400: an error makes Chatwoot flag the agent bot and reopen the conversation.
+        req.log.warn({ issues: parsed.error.issues.slice(0, 5) }, 'chatwoot webhook: unexpected payload, ignored');
+        return { status: 'ignored', reason: 'invalid_payload' };
+      }
       const evt = parsed.data;
       // Loop guard: only incoming contact messages.
       if (!isProcessableIncoming(evt) || !evt.id || !evt.conversation || !evt.inbox) return { status: 'ignored' };

@@ -7,6 +7,7 @@ import { localHour, scanReminders, sendDailySummary, sendInvoice, sendReceipt, s
 import { closeShared, createTenant, drain, testContainer } from './helpers.js';
 import { cwMessage, postCw } from './webhook-helpers.js';
 import { jobHandlers } from '../src/jobs/handlers.js';
+import { sendWhatsApp } from '../src/modules/outbound/whatsapp.js';
 
 const c = testContainer();
 let app: FastifyInstance;
@@ -108,5 +109,14 @@ describe('daily summary', () => {
     const sent = c.cws.get(A.tenant.id)!.sent.filter((m) => m.template?.name === 'nextai_daily_summary');
     expect(sent).toHaveLength(1);
     expect(sent[0]!.template!.params[2]).toMatch(/5,05,000/); // cash 25000 + bank 480000 from fake balances
+  });
+});
+
+describe('outbound conversation reuse', () => {
+  it('sends to the same conversation for the same phone instead of opening a new one', async () => {
+    const opts = { kind: 'notice' as const, phone: '+919800000001', name: 'Reuse test', templateKey: 'connection_test', params: [], fallbackText: 'hello' };
+    const first = await sendWhatsApp(c, A.tenant, opts);
+    const second = await sendWhatsApp(c, A.tenant, { ...opts, fallbackText: 'again' });
+    expect(second.conversationId).toBe(first.conversationId);
   });
 });
