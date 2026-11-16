@@ -121,8 +121,15 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
   const { c, tenant } = ctx;
   const e = intent.entities;
   const today = new Date().toISOString().slice(0, 10);
-  const currency = (e.currency ?? tenant.currency) as Currency;
+  const currency = tenant.currency as Currency; // books are kept in the business currency
   const erpCtx = erpContext(tenant);
+  const money = ['record_expense', 'record_sale', 'payment_in', 'payment_out'].includes(intent.intent);
+  if (money && e.amount && e.currency && e.currency !== tenant.currency) {
+    // "paid 20 USD …" in an INR business: posting 20 would book ₹20. Ask what was actually charged.
+    const original = `${e.currency} ${e.amount}`;
+    const described = { ...e, amount: undefined, currency: undefined, description: [e.description, `(${original})`].filter(Boolean).join(' ') };
+    return askFor(ctx, { ...intent, entities: described }, 'amount', `amount in ${tenant.currency} that was charged for ${original}`);
+  }
   const base = { userId: ctx.user.id, conversationId: ctx.conversationId, actor: { id: ctx.user.id, type: 'user' as const, channel: 'whatsapp' as const } };
 
   switch (intent.intent) {
