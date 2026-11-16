@@ -3,19 +3,23 @@ import type { PlanCode, PlanLimits } from '@nextai/shared';
 /**
  * Plans as published on nextaierp.com (UAE monthly pricing: Base AED 99 / 1 user, Growth AED 299 /
  * 4 users, Pro AED 599 / 10 users). INR prices are placeholders until India pricing is confirmed.
+ *
+ * These are the values for a NEW database only: the seed never overwrites an existing plan, so edits made in
+ * Admin → Plans survive redeploys. Change live plans in Admin → Plans (or with a data migration).
+ * `ocrPagesPerMonth` is the bill-entry limit: one per bill photo (one per page for PDFs).
  */
 export const DEFAULT_PLANS: Array<{ code: PlanCode; name: string; priceMonthly: Record<string, number>; limits: PlanLimits }> = [
   {
     code: 'base',
     name: 'Base',
     priceMonthly: { AED: 99, INR: 999 },
-    limits: { users: 1, ocrPagesPerMonth: 100, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: [] },
+    limits: { users: 1, ocrPagesPerMonth: 200, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: [] },
   },
   {
     code: 'growth',
     name: 'Growth',
     priceMonthly: { AED: 299, INR: 2499 },
-    limits: { users: 4, ocrPagesPerMonth: 500, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books'] },
+    limits: { users: 4, ocrPagesPerMonth: 1000, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books'] },
   },
   {
     code: 'pro',
@@ -23,7 +27,7 @@ export const DEFAULT_PLANS: Array<{ code: PlanCode; name: string; priceMonthly: 
     priceMonthly: { AED: 599, INR: 5999 },
     limits: {
       users: 10,
-      ocrPagesPerMonth: 2000,
+      ocrPagesPerMonth: 5000,
       invoicesSentPerMonth: 2000,
       messagesPerMonth: 20000,
       features: ['tax_centre', 'ask_books', 'multi_currency', 'api_access'],

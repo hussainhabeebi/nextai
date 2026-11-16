@@ -90,7 +90,7 @@ with exponential backoff; corrections are cancel + amend, never delete.
 currency and carries the remaining trial. `/webhooks/stripe` verifies the signature, is idempotent by event
 id, and maps subscription status to tenant status (`trialing → trial`, `active`, `past_due`, others →
 `suspended`). `past_due` shows a banner and sends a WhatsApp notice; `suspended` makes the app read-only and
-the bot replies with the billing link. Plan limits (users, OCR pages, invoices sent, messages, features) are
+the bot replies with the billing link. Plan limits (users, bill entries — `ocrPagesPerMonth`, invoices sent, messages, features) are
 enforced in the API and on WhatsApp.
 
 ## Security checklist
