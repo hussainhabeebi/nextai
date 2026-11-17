@@ -1,6 +1,9 @@
 import { parseChoice } from '@nextai/chatwoot-client';
 import { QUEUES, formatMoney, t, type Currency, type DraftPayload, type IntentResult } from '@nextai/shared';
 import { ruleClassify } from '../../ai/index.js';
+import { cleanName, normalizeKind } from '../../ai/rules.js';
+import { ErpError } from '@nextai/erpnext-client';
+import { audit } from '../audit/audit.js';
 import { tenantDb } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import type { BotContext } from '../chatwoot/context.js';
@@ -8,6 +11,7 @@ import { say } from '../chatwoot/context.js';
 import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, summaryText, updateDraftPayload } from '../drafts/service.js';
 import { erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
 import { chooseExpenseAccount } from '../erpnext/expense-account.js';
+import { createLedger, createParty, isPartyKind } from '../erpnext/create-account.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 
@@ -64,7 +68,11 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
 
   if (state.step === 'awaiting_field' && state.pendingIntent && state.field) {
     const partial = { ...(state.partial ?? {}) } as IntentResult['entities'];
-    if (state.field === 'amount') {
+    if (state.field === 'kind') {
+      const kind = normalizeKind(text);
+      if (!kind) return say(ctx, kindQuestion(String(partial.accountName ?? partial.party ?? 'it')));
+      partial.kind = kind;
+    } else if (state.field === 'amount') {
       const n = Number(text.replace(/[^\d.]/g, ''));
       if (!(n > 0)) return say(ctx, t(ctx.lang, 'bot.missingField', { field: 'amount' }));
       partial.amount = n;
@@ -130,6 +138,46 @@ async function classify(ctx: BotContext, text: string): Promise<IntentResult> {
   } catch (err) {
     logger.warn({ tenantId: ctx.tenant.id, err: (err as Error).message }, 'llm classify failed');
     return rule ?? { intent: 'help', confidence: 0, entities: {} };
+  }
+}
+
+const kindQuestion = (name: string) =>
+  `What is ${name}?\n1. Customer\n2. Supplier\n3. Expense account\n4. Income account\n5. Bank account`;
+const KIND_LABEL = { customer: 'Customer', supplier: 'Supplier', expense: 'Expense account', income: 'Income account', bank: 'Bank account', cash: 'Cash account' } as const;
+
+/** Add a customer/supplier or a ledger in ERPNext (asking for the name or the kind first when missing). */
+async function addAccount(ctx: BotContext, intent: IntentResult): Promise<void> {
+  const { c, tenant } = ctx;
+  const e = intent.entities;
+  const name = cleanName(e.accountName || e.party || '');
+  const kind = normalizeKind(e.kind);
+  if (!name) return askFor(ctx, intent, 'party', kind ? `${KIND_LABEL[kind].toLowerCase()} name` : 'name');
+  if (!kind) {
+    await c.conversations.set(tenant.id, ctx.conversationId, { step: 'awaiting_field', pendingIntent: intent.intent, field: 'kind', partial: { ...e, party: name } });
+    return say(ctx, kindQuestion(name));
+  }
+  if (!isPartyKind(kind) && ctx.user.role === 'staff') {
+    return say(ctx, `Only the owner or your accountant can add ledger accounts. Please ask them to send "create ${kind} account ${name}".`);
+  }
+  try {
+    const r = isPartyKind(kind) ? await createParty(c, tenant, kind, name) : await createLedger(c, tenant, kind, name);
+    const label = KIND_LABEL[kind];
+    if (!r.created) {
+      return say(ctx, `${name} is already in your books${r.group ? ` (under ${r.group})` : ''}. Nothing new was added.`);
+    }
+    await audit(c.prisma, { tenantId: tenant.id, actorId: ctx.user.id, actorType: 'user', channel: 'whatsapp', action: isPartyKind(kind) ? 'party.create' : 'account.create', entity: isPartyKind(kind) ? kind : 'account', entityId: r.name, after: { kind, name: r.name, group: r.group } });
+    const hint =
+      kind === 'customer' ? `\nTry: "sold 5000 to ${name}"`
+      : kind === 'supplier' ? `\nTry: "paid 5000 to ${name}" or send their bill`
+      : kind === 'expense' ? `\nBills can now be booked to it: when editing a bill, reply "account ${name}".`
+      : '';
+    return say(ctx, `✅ ${label} "${name}" added to your books${r.group ? ` under ${r.group}` : ''}.${hint}`);
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, kind, err: (err as Error).message }, 'create account failed');
+    const why = err instanceof ErpError ? ` ERPNext said: ${err.userMessage}` : '';
+    return say(ctx, `Sorry, I couldn't add ${name} right now.${why}`);
+  } finally {
+    await c.conversations.set(tenant.id, ctx.conversationId, { step: 'idle' });
   }
 }
 
@@ -225,11 +273,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
       await say(ctx, `⏰ Sending a payment reminder to ${e.party}.`);
       return;
     }
-    case 'add_party': {
-      if (!e.party) return askFor(ctx, intent, 'party', 'name');
-      await say(ctx, `👍 ${e.party} will be added to your books with their first bill or invoice.`);
-      return;
-    }
+    case 'add_party':
+    case 'add_account':
+      return addAccount(ctx, intent);
     case 'help':
     default: {
       const pending = await tenantDb(c.prisma, tenant.id).draft.count({ where: { status: { in: ['pending', 'needs_review'] } } });

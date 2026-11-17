@@ -38,6 +38,15 @@ function parseText<T>(content: Anthropic.ContentBlock[], schema: z.ZodType<T, z.
   return schema.parse(JSON.parse(text));
 }
 
+/** Every entity key is required in the output schema, so unused ones come back as "" or 0: drop them before validating. */
+export function parseIntent(text: string) {
+  const raw = JSON.parse(text) as { entities?: Record<string, unknown> };
+  const entities = Object.fromEntries(
+    Object.entries(raw.entities ?? {}).filter(([k, v]) => v !== null && v !== '' && !(k === 'amount' && (typeof v !== 'number' || v <= 0)) && !(k === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(String(v)))),
+  );
+  return intentResultSchema.parse({ ...raw, entities });
+}
+
 function usageOf(u: { input_tokens: number; output_tokens: number }): AiUsage {
   return {
     tokens: u.input_tokens + u.output_tokens,
@@ -84,6 +93,30 @@ export class AnthropicVision implements VisionProvider {
   }
 }
 
+/** Intent prompt: everyday, informal and mixed-language phrasing, with examples for every intent. */
+export const CLASSIFY_PROMPT = (ctx: { country: Country; currency: Currency; today: string }) => `You read WhatsApp messages from small-business owners and staff in ${ctx.country === 'IN' ? 'India' : 'the UAE'} and decide what they want done in their books.
+Today is ${ctx.today}; the business currency is ${ctx.currency}. People write casually: short forms, typos, no punctuation, numbers like 5k / 2 lakh / 1.5L,
+and English mixed with Malayalam (Manglish, e.g. "kaasu kitti", "koduthu", "vangi", "add cheyyu") or Arabic. Understand the meaning, not exact words.
+
+Intents (pick exactly one):
+- record_expense: they spent money on something. "petrol 500", "tea 50 cash", "paid electricity bill 3200", "rent koduthu 15000"
+- record_sale: they sold or billed a customer. "sold 5000 to Ravi", "Ravi ku 2000 nte sale", "bill 3500 for Anil"
+- payment_in: a customer paid them. "Ravi paid 2000", "got 5k from Shop 24", "received 1500 from Anil by upi", "Anil kaasu thannu 1000"
+- payment_out: they paid a supplier / named person what they owed. "paid 8000 to AM Motors", "gave 500 to Suresh"
+- add_party: create a customer or supplier (a "party", "account", "contact" or "ledger" for a person or business).
+  "Create supplier account AM Motors", "add AM Motors as vendor", "new customer Ravi Traders", "Ravi ne customer aayi add cheyyu"
+- add_account: create a ledger in the chart of accounts. "create expense account Fuel", "open bank account HDFC", "new income ledger Commission"
+- ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
+- request_report: P&L, balance sheet, receivables, payables, ledger, cash flow
+- send_reminder: remind a customer to pay. "remind Ravi", "Ravi ne remind cheyyu"
+- help: greetings or when nothing above fits.
+
+Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier name as written;
+description = what the money was for; date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
+kind (add_party / add_account) = customer, supplier, expense, income, bank or cash, left empty if not said; accountName (add_account) = the ledger name;
+question (ask_books) = the question as written. Use an empty string (0 for amount) for entities that do not apply.
+Prefer a concrete intent over help whenever the meaning is reasonably clear; lower the confidence when unsure.`;
+
 export class AnthropicLlm implements LlmProvider {
   readonly name = 'anthropic';
   private readonly client: Anthropic;
@@ -95,15 +128,13 @@ export class AnthropicLlm implements LlmProvider {
     const response = await this.client.messages.create({
       model: MODEL,
       max_tokens: 2000,
-      system: `Classify a small-business owner's WhatsApp message into one accounting intent and extract entities.
-Today is ${ctx.today}; default currency ${ctx.currency}; country ${ctx.country}. Messages may be in English, Malayalam (incl. Manglish) or Arabic.
-Intents: record_expense (they spent money), record_sale (they sold/billed), payment_in (a customer paid them),
-payment_out (they paid a supplier), ask_books (question about their numbers), request_report, send_reminder, add_party, help.`,
+      system: CLASSIFY_PROMPT(ctx),
       output_config: { effort: 'low', format: { type: 'json_schema', schema: INTENT_JSON } },
       messages: [{ role: 'user', content: text }],
     });
     if (response.stop_reason !== 'end_turn') throw new Error(`Intent classification failed: ${response.stop_reason}`);
-    return { result: parseText(response.content, intentResultSchema), usage: usageOf(response.usage) };
+    const json = response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+    return { result: parseIntent(json), usage: usageOf(response.usage) };
   }
 
   async chooseAccount(description: string, ledgers: string[], ctx: { country: Country }) {

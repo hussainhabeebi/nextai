@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest';
+import { parseIntent } from '../src/ai/anthropic.js';
 import { parseDate, ruleClassify } from '../src/ai/rules.js';
+
+describe('creating accounts and everyday phrasing', () => {
+  it('understands everyday ways of asking for a customer, supplier or ledger account', () => {
+    const r = (text: string) => ruleClassify(text);
+    expect(r('Create supplier account AM Motors')).toMatchObject({ intent: 'add_party', entities: { kind: 'supplier', party: 'AM Motors' } });
+    expect(r('add customer ravi traders')).toMatchObject({ intent: 'add_party', entities: { kind: 'customer', party: 'Ravi Traders' } });
+    expect(r('new vendor: AM Motors')).toMatchObject({ intent: 'add_party', entities: { kind: 'supplier', party: 'AM Motors' } });
+    expect(r('please add AM Motors as a supplier')).toMatchObject({ intent: 'add_party', entities: { kind: 'supplier', party: 'AM Motors' } });
+    expect(r('Al Noor Trading is a new customer')).toMatchObject({ intent: 'add_party', entities: { kind: 'customer', party: 'Al Noor Trading' } });
+    expect(r('create a new client named "Shop 24"')).toMatchObject({ intent: 'add_party', entities: { kind: 'customer', party: 'Shop 24' } });
+    expect(r('create account for AM Motors')).toMatchObject({ intent: 'add_party', entities: { party: 'AM Motors' } });
+    expect(r('create account for AM Motors')!.entities.kind).toBeUndefined();
+    expect(r('add party Ravi')).toMatchObject({ intent: 'add_party', entities: { party: 'Ravi' } });
+    expect(r('add a supplier')).toMatchObject({ intent: 'add_party', entities: { kind: 'supplier' } });
+    expect(r('create expense account Fuel')).toMatchObject({ intent: 'add_account', entities: { kind: 'expense', accountName: 'Fuel' } });
+    expect(r('open bank account HDFC Current')).toMatchObject({ intent: 'add_account', entities: { kind: 'bank', accountName: 'HDFC Current' } });
+    expect(r('new income ledger Commission')).toMatchObject({ intent: 'add_account', entities: { kind: 'income', accountName: 'Commission' } });
+    // money messages are not mistaken for account creation
+    expect(r('add expense 500 for tea')?.intent).not.toBe('add_account');
+    expect(r('paid 500 to AM Motors')!.intent).toBe('payment_out');
+  });
+
+  it('understands common ways of saying money came in or went out', () => {
+    expect(ruleClassify('received 5000 from Ravi Traders by upi')).toMatchObject({ intent: 'payment_in', entities: { amount: 5000, party: 'Ravi Traders', paymentMode: 'upi' } });
+    expect(ruleClassify('got 2k from shop 24')).toMatchObject({ intent: 'payment_in', entities: { amount: 2000, party: 'Shop 24' } });
+    expect(ruleClassify('Anil gave 1500')).toMatchObject({ intent: 'payment_in', entities: { amount: 1500, party: 'Anil' } });
+    expect(ruleClassify('gave 800 to Suresh')).toMatchObject({ intent: 'payment_out', entities: { amount: 800, party: 'Suresh' } });
+    expect(ruleClassify('gave 300 for auto fare')).toMatchObject({ intent: 'record_expense', entities: { amount: 300, description: 'auto fare' } });
+    expect(ruleClassify('sold to Ravi for 5000')).toMatchObject({ intent: 'record_sale', entities: { amount: 5000, party: 'Ravi' } });
+  });
+
+  it('accepts AI replies that fill unused fields with empty values', () => {
+    const out = parseIntent(JSON.stringify({ intent: 'add_party', confidence: 0.9, entities: { amount: 0, currency: '', party: 'AM Motors', description: '', date: '', paymentMode: '', report: '', question: '', kind: 'supplier', accountName: '' } }));
+    expect(out).toEqual({ intent: 'add_party', confidence: 0.9, entities: { party: 'AM Motors', kind: 'supplier' } });
+  });
+});
 
 describe('ruleClassify', () => {
   it('does not read currency hints inside words', () => {
