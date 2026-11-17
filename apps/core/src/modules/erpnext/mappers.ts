@@ -267,7 +267,8 @@ export function partyDoc(kind: 'Customer' | 'Supplier', name: string, extra: { t
 }
 
 type AccountRole = 'bank' | 'cash' | 'expense' | 'income';
-const accountCache = new Map<string, { at: number; ok: Set<string>; expense: string[]; fallback: Partial<Record<AccountRole, string>> }>();
+export type ChartEntry = { rootType?: string; accountType?: string };
+const accountCache = new Map<string, { at: number; ok: Set<string>; expense: string[]; types: Map<string, ChartEntry>; fallback: Partial<Record<AccountRole, string>> }>();
 
 /** Account types that are expenses in the chart but never a target for a typed/photographed bill. */
 const NON_BILL_EXPENSE_TYPES = new Set(['Cost of Goods Sold', 'Stock Adjustment', 'Depreciation', 'Round Off', 'Expenses Included In Valuation', 'Expenses Included In Asset Valuation', 'Temporary', 'Accumulated Depreciation']);
@@ -304,6 +305,7 @@ async function loadChart(erp: Pick<ErpClient, 'list'>, ctx: ErpContext, cacheKey
     cache = {
       at: Date.now(),
       ok: new Set(leaves.map((r) => r.name)),
+      types: new Map(leaves.map((r) => [r.name, { rootType: r.root_type, accountType: r.account_type || undefined }])),
       expense: leaves.filter((r) => r.root_type === 'Expense' && !NON_BILL_EXPENSE_TYPES.has(r.account_type ?? '')).map((r) => r.name).sort(),
       fallback: {
         bank: pick((r) => r.account_type === 'Bank', ctx.settings.defaultBankAccount),
@@ -315,6 +317,11 @@ async function loadChart(erp: Pick<ErpClient, 'list'>, ctx: ErpContext, cacheKey
     accountCache.set(key, cache);
   }
   return cache;
+}
+
+/** Root/account type of every ledger in the company's chart (for reports: income vs expense, cash/bank, tax). */
+export async function chartTypes(erp: Pick<ErpClient, 'list'>, ctx: ErpContext, cacheKey: string): Promise<Map<string, ChartEntry>> {
+  return (await loadChart(erp, ctx, cacheKey)).types;
 }
 
 /** The company's expense ledgers that a bill can be booked to (empty when ERPNext can't be read). */

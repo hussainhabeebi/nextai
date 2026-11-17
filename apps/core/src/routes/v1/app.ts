@@ -1,4 +1,4 @@
-import { QUEUES, REPORT_NAMES, draftPayloadSchema, draftStatusSchema, normalizePhone, tenantSettingsSchema, type Currency, type DraftPayload, type ReportKey } from '@nextai/shared';
+import { QUEUES, REPORT_NAMES, draftPayloadSchema, draftStatusSchema, isoDate, normalizePhone, tenantSettingsSchema, type Currency, type DraftPayload, type ReportKey } from '@nextai/shared';
 import type { Prisma } from '@prisma/client';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -8,8 +8,9 @@ import { sha256 } from '../../lib/crypto.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { audit } from '../../modules/audit/audit.js';
 import { cancelDraft, confirmDraft, createDraft, getDraft, updateDraftPayload } from '../../modules/drafts/service.js';
+import { PERIODS, buildAnalytics, dayTotals, fetchAnalytics, ledgerEntries, periodsFor } from '../../modules/reports/analytics.js';
 import { erpContext } from '../../modules/erpnext/mappers.js';
-import { booksContext, runReport, totalOutstanding } from '../../modules/reports/reports.js';
+import { booksContext, runReport } from '../../modules/reports/reports.js';
 import { incrementUsage } from '../../modules/usage/usage.js';
 import { tenantKey } from '../../storage/storage.js';
 import { assertWithinLimit, requireFeature } from '../../modules/billing/gating.js';
@@ -28,54 +29,69 @@ export const appRoutes =
     const perTenant = { config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: (req: FastifyRequest) => `t:${req.user?.tid ?? req.ip}` } } };
 
     // ---------------- Dashboard ----------------
+    /**
+     * Home: every number comes from the ERPNext ledger, so entries made directly in ERPNext count too.
+     * Anything that can't be read is listed in `errors` instead of being shown as a misleading ₹0.
+     */
     app.get('/dashboard', { ...perTenant, schema: { tags: ['app'] } }, async (req) => {
       const t = req.tenant!;
-      const { company } = erpContext(t);
-      const erp = c.erp(t);
-      const safe = async <T>(f: () => Promise<T>, fallback: T) => {
-        try {
-          return await f();
-        } catch {
-          return fallback;
-        }
-      };
-      const [bal, ar, ap, pending, posted] = await Promise.all([
-        safe(() => erp.getBalances(company), { cash: 0, bank: 0, accounts: [] }),
-        safe(() => runReport(c, t, 'receivables'), { columns: [], result: [] }),
-        safe(() => runReport(c, t, 'payables'), { columns: [], result: [] }),
+      const { current, previous } = periodsFor('this_month', t.country);
+      const [raw, todayTotals, pending] = await Promise.all([
+        fetchAnalytics(c, t, current, previous),
+        dayTotals(c, t, today()).catch(() => null),
         req.db!.draft.count({ where: { status: { in: ['pending', 'needs_review'] } } }),
-        req.db!.draft.findMany({ where: { status: 'posted', updatedAt: { gte: new Date(Date.now() - 32 * 86400_000) } } }),
       ]);
-      const month = today().slice(0, 7);
-      const sum = (types: string[], pred: (p: DraftPayload) => boolean) =>
-        posted.filter((d) => types.includes(d.type) && pred(d.payload as DraftPayload)).reduce((s, d) => s + (d.payload as DraftPayload).total, 0);
-      const salesMtd = sum(['sales_invoice'], (p) => p.date.startsWith(month));
-      const expMtd = sum(['purchase_invoice', 'journal_entry'], (p) => p.date.startsWith(month));
-      const taxDue = posted
-        .filter((d) => (d.payload as DraftPayload).date.startsWith(month))
-        .reduce((s, d) => {
-          const tx = (d.payload as DraftPayload).taxes ?? {};
-          const v = (tx.cgst ?? 0) + (tx.sgst ?? 0) + (tx.igst ?? 0) + (tx.vat ?? 0);
-          return s + (d.type === 'sales_invoice' ? v : d.type === 'purchase_invoice' ? -v : 0);
-        }, 0);
+      const a = buildAnalytics(raw, t.currency as Currency, current, previous);
       const alerts: Array<{ kind: string; text: string }> = [];
       if (t.status === 'past_due') alerts.push({ kind: 'billing', text: 'Payment failed — update your card.' });
       if (pending) alerts.push({ kind: 'approvals', text: `${pending} item(s) need your approval.` });
       return {
         currency: t.currency as Currency,
-        cash: bal.cash,
-        bank: bal.bank,
-        receivables: totalOutstanding(ar),
-        payables: totalOutstanding(ap),
-        todaySales: sum(['sales_invoice'], (p) => p.date === today()),
-        todayExpenses: sum(['purchase_invoice', 'journal_entry'], (p) => p.date === today()),
-        profitMtd: salesMtd - expMtd,
-        taxDue: Math.max(0, taxDue),
+        cash: a.balances?.cash ?? null,
+        bank: a.balances?.bank ?? null,
+        receivables: a.receivables.total,
+        receivablesOverdue: a.receivables.overdue,
+        payables: a.payables.total,
+        todaySales: todayTotals?.income ?? null,
+        todayExpenses: todayTotals?.expenses ?? null,
+        salesMtd: a.kpis.income,
+        expensesMtd: a.kpis.expenses,
+        profitMtd: a.kpis.profit,
+        profitPrev: a.kpis.prev.profit,
+        taxDue: a.kpis.taxPayable,
+        insight: a.insights[0] ?? null,
         pendingApprovals: pending,
         alerts,
+        errors: a.errors,
         tenantStatus: t.status,
       };
     });
+
+    /** Insights: KPIs vs the previous period, 6-month trend, breakdowns, ageing and plain-language insights. */
+    app.get(
+      '/analytics',
+      { ...perTenant, schema: { tags: ['app'], querystring: z.object({ period: z.enum(PERIODS).default('this_month') }) } },
+      async (req) => {
+        const t = req.tenant!;
+        const { current, previous } = periodsFor(req.query.period, t.country);
+        return buildAnalytics(await fetchAnalytics(c, t, current, previous), t.currency as Currency, current, previous);
+      },
+    );
+
+    /** Drill-down: the ledger lines behind a number (an account or a customer/supplier). */
+    app.get(
+      '/analytics/entries',
+      {
+        ...perTenant,
+        schema: {
+          tags: ['app'],
+          querystring: z
+            .object({ account: z.string().max(200).optional(), party: z.string().max(200).optional(), from: isoDate, to: isoDate })
+            .refine((q) => q.account || q.party, 'account or party is required'),
+        },
+      },
+      async (req) => ({ items: await ledgerEntries(c, req.tenant!, req.query) }),
+    );
 
     // ---------------- Drafts / approvals ----------------
     app.get(

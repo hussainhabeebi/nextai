@@ -1,3 +1,4 @@
+import { clearAccountCache } from '../src/modules/erpnext/mappers.js';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seed } from '../prisma/seed.js';
@@ -72,9 +73,34 @@ describe('customer app API', () => {
     expect(listB.json().items.map((x: { id: string }) => x.id)).not.toContain(d.id);
   });
 
-  it('dashboard returns figures; settings require owner and are audited', async () => {
+  it('dashboard figures come from the ERPNext ledger (incl. entries made in ERPNext); settings require owner', async () => {
+    const erp = c.erp(A.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    const company = `Co ${A.tenant.slug}`;
+    const acc = (name: string, root_type: string, account_type = '') => erp.create('Account', { name, company, is_group: 0, root_type, account_type });
+    await acc('Cash - AIL', 'Asset', 'Cash');
+    await acc('HDFC - AIL', 'Asset', 'Bank');
+    await acc('Sales - AIL', 'Income');
+    await acc('Office Rent - AIL', 'Expense');
+    const today = new Date().toISOString().slice(0, 10);
+    let n = 0;
+    const gl = (account: string, debit: number, credit: number, posting_date = today) =>
+      erp.create('GL Entry', { name: `GL-${++n}`, company, is_cancelled: 0, account, debit, credit, posting_date });
+    await gl('HDFC - AIL', 500000, 0, '2026-01-01'); // opening, entered directly in ERPNext
+    await gl('Cash - AIL', 25000, 0, '2026-01-01');
+    await gl('HDFC - AIL', 10000, 0); // sale received today
+    await gl('Sales - AIL', 0, 10000);
+    await gl('Office Rent - AIL', 4000, 0); // rent paid today
+    await gl('HDFC - AIL', 0, 4000);
+    clearAccountCache(A.tenant.id); // the chart was cached (empty) by earlier postings in this file
     const dash = await app.inject({ method: 'GET', url: '/v1/dashboard', headers: auth(tokA) });
-    expect(dash.json()).toMatchObject({ currency: 'INR', cash: 25000, bank: 480000 });
+    expect(dash.json()).toMatchObject({ currency: 'INR', cash: 25000, bank: 506000, todaySales: 10000, todayExpenses: 4000, salesMtd: 10000, expensesMtd: 4000, profitMtd: 6000 });
+
+    const an = await app.inject({ method: 'GET', url: '/v1/analytics?period=this_month', headers: auth(tokA) });
+    expect(an.statusCode).toBe(200);
+    expect(an.json().expenseByAccount[0]).toMatchObject({ account: 'Office Rent', ledger: 'Office Rent - AIL', amount: 4000 });
+    const lines = await app.inject({ method: 'GET', url: `/v1/analytics/entries?account=${encodeURIComponent('Office Rent - AIL')}&from=2026-01-01&to=${today}`, headers: auth(tokA) });
+    expect(lines.json().items).toHaveLength(1);
+    expect((await app.inject({ method: 'GET', url: `/v1/analytics/entries?from=2026-01-01&to=${today}`, headers: auth(tokA) })).statusCode).toBe(400);
     const denied = await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(staffA), payload: { settings: { autoPost: true } } });
     expect(denied.statusCode).toBe(403);
     const ok = await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(tokA), payload: { settings: { autoPost: true } } });

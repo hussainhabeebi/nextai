@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Bot, ChevronRight, CreditCard, Landmark, LogOut, Receipt, Settings, Users, Wallet } from 'lucide-react';
+import { BarChart3, Bot, ChevronRight, CreditCard, Landmark, LogOut, Receipt, Settings, Sparkles, Users, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { Page } from '@/components/page';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 
 const LINKS = [
+  { href: '/insights', label: 'Insights & analysis', icon: Sparkles },
   { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
   { href: '/parties', label: 'Customers & suppliers', icon: Users },
