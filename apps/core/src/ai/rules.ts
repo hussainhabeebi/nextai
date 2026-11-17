@@ -1,4 +1,4 @@
-import type { IntentResult } from '@nextai/shared';
+import type { AccountKind, IntentResult } from '@nextai/shared';
 
 const MODES: Record<string, string> = {
   cash: 'cash', bank: 'bank', 'bank transfer': 'bank', transfer: 'bank', cheque: 'bank', check: 'bank', neft: 'bank', imps: 'bank', rtgs: 'bank',
@@ -26,6 +26,67 @@ export function parseDate(s: string, now = new Date()): string | undefined {
   return iso(date);
 }
 
+const KIND_WORDS: Record<string, AccountKind> = {
+  customer: 'customer', customers: 'customer', client: 'customer', buyer: 'customer', debtor: 'customer',
+  supplier: 'supplier', suppliers: 'supplier', vendor: 'supplier', seller: 'supplier', creditor: 'supplier',
+  expense: 'expense', expenses: 'expense', income: 'income', revenue: 'income', bank: 'bank', cash: 'cash',
+};
+const PARTY_KINDS = new Set<AccountKind>(['customer', 'supplier']);
+
+/** "Supplier", "vendor", "3", "expense account" → the account kind ("party" and unknown words → undefined). */
+export function normalizeKind(s: string | undefined): AccountKind | undefined {
+  if (!s) return undefined;
+  const v = s.trim().toLowerCase();
+  const byNumber: Record<string, AccountKind> = { '1': 'customer', '2': 'supplier', '3': 'expense', '4': 'income', '5': 'bank' };
+  if (byNumber[v]) return byNumber[v];
+  return v.split(/[^a-z]+/).map((w) => KIND_WORDS[w]).find(Boolean);
+}
+
+const VERB = String.raw`(?:please\s+)?(?:create|add|new|open|make|register|set\s*up|setup|start|insert|enter|save|put)`;
+const KIND = String.raw`(customers?|client|buyer|debtor|suppliers?|vendor|seller|creditor|party|expenses?|income|revenue|bank|cash)`;
+const ACC = String.raw`(?:account|a\/c|acc|ledger|head|master|contact|name)`;
+const FILLER = String.raw`(?:(?:a|an|the|new|one|my|our)\s+)*`;
+const LINK = String.raw`(?:\s*(?:named|called|name|for|of|as|:|-|=)\s*|\s+)`;
+
+/** The name as typed, without quotes or a trailing full stop; Title Case only when it was typed all lower case. */
+export function cleanName(s: string): string | undefined {
+  const n = s.trim().replace(/^["'“‘]+|["'”’.!]+$/g, '').replace(/\s+/g, ' ').trim();
+  if (!n || n.length > 80 || /^\d[\d,.]*$/.test(n)) return undefined;
+  return n === n.toLowerCase() ? titleCase(n) : n;
+}
+
+/**
+ * "Create supplier account AM Motors", "add customer Ravi", "new vendor: AM Motors", "add AM Motors as a supplier",
+ * "AM Motors is a new supplier", "open bank account HDFC", "create expense ledger Fuel", "create account for X".
+ * Ledger kinds (expense/income/bank/cash) need the word account/ledger, so "add expense 500 for tea" stays an expense.
+ */
+export function parseCreateAccount(text: string): IntentResult | undefined {
+  const s = text.trim().replace(/\s+/g, ' ');
+  const result = (kindWord: string | undefined, accWord: boolean, rawName: string): IntentResult | undefined => {
+    const kind = normalizeKind(kindWord);
+    const hasAccWord = accWord || /^party$/i.test(kindWord ?? ''); // "add party Ravi": a party of unknown kind
+    if (kind && !PARTY_KINDS.has(kind) && !hasAccWord) return undefined;
+    if (!kind && !hasAccWord) return undefined;
+    const name = cleanName(rawName);
+    if (!name) return { intent: kind && !PARTY_KINDS.has(kind) ? 'add_account' : 'add_party', confidence: 0.9, entities: { kind } };
+    return kind && !PARTY_KINDS.has(kind)
+      ? { intent: 'add_account', confidence: 0.9, entities: { kind, accountName: name } }
+      : { intent: 'add_party', confidence: 0.9, entities: { kind, party: name } };
+  };
+  // add AM Motors as (a) supplier (account)
+  let m = s.match(new RegExp(String.raw`^${VERB}\s+(.+?)\s+as\s+${FILLER}${KIND}(?:\s+${ACC})?\.?$`, 'i'));
+  if (m) return result(m[2], true, m[1]!);
+  // AM Motors is a (new) supplier
+  m = s.match(new RegExp(String.raw`^(.+?)\s+is\s+${FILLER}${KIND}(?:\s+${ACC})?\.?$`, 'i'));
+  if (m && PARTY_KINDS.has(normalizeKind(m[2]) as AccountKind)) return result(m[2], true, m[1]!);
+  // create (a new) supplier (account) (named) AM Motors   |   new supplier: AM Motors   |   create account for AM Motors
+  m = s.match(new RegExp(String.raw`^${VERB}\s+${FILLER}(?:${KIND}\s*)?(${ACC}s?)?${LINK}(.*)$`, 'i'));
+  if (m && (m[1] || m[2])) return result(m[1], Boolean(m[2]), m[3] ?? '');
+  m = s.match(new RegExp(String.raw`^${VERB}\s+${FILLER}(?:${KIND})(?:\s+(${ACC}s?))?\s*$`, 'i')); // "add a supplier" (name asked next)
+  if (m) return result(m[1], true, '');
+  return undefined;
+}
+
 /**
  * Deterministic, zero-cost intent classifier used before the LLM. Handles the common
  * short phrasings ("paid 500 for tea", "Ravi paid 2000", "sold 5000 to Ravi", "report p&l").
@@ -45,7 +106,7 @@ export function ruleClassify(text: string): IntentResult | undefined {
   // Suffix k/l/lakh only as its own word ("5k", "2 lakh"), so "5000 loaves" stays 5000; "20USD" is fine.
   const NUM = String.raw`(?:rs\.?|₹|inr|aed|dhs?|usd|\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*(?:(k|lakh|l)(?![a-z]))?`;
   const amountMatch =
-    t.match(new RegExp(String.raw`\b(?:paid|sent|transferred|spent|sold|bought|purchased|received|sale|invoice)\s+(?:me\s+|us\s+)?` + NUM)) ??
+    t.match(new RegExp(String.raw`\b(?:paid|sent|transferred|spent|sold|bought|purchased|received|recd|got|collected|gave|given|sale|invoice)\s+(?:me\s+|us\s+)?` + NUM)) ??
     t.match(new RegExp(NUM));
   const amount = amountMatch
     ? Number(amountMatch[1]!.replace(/,/g, '')) *
@@ -64,6 +125,9 @@ export function ruleClassify(text: string): IntentResult | undefined {
 
   if (/^(help|menu|hi|hello|start|\?)$/.test(t)) return { intent: 'help', confidence: 0.95, entities: {} };
 
+  const create = parseCreateAccount(text);
+  if (create) return create;
+
   const report = t.match(/\b(report|statement)\b.*?\b(p&l|pnl|profit|loss|balance sheet|bs|receivable|payable|ledger|cash ?flow)\b/) ??
     t.match(/\b(p&l|pnl|profit and loss|balance sheet)\b/);
   if (report) {
@@ -78,27 +142,30 @@ export function ruleClassify(text: string): IntentResult | undefined {
   }
 
   // "<party> paid 2000" → payment_in
-  const pin = t.match(/^([a-z][\w .&-]{1,40}?)\s+(?:paid|sent|transferred)\s+(?:me\s+)?/);
+  // "received 5000 from Ravi" / "got 2k from Shop 24" / "collected 1500 from Anil" → payment_in
+  const recv = t.match(/^(?:i |we )?(?:received|recd|got|collected)\b.*?\bfrom\s+([a-z][\w .&-]{1,40})$/);
+  if (recv && amount) {
+    return { intent: 'payment_in', confidence: 0.85, entities: { amount, currency, paymentMode, date, party: titleCase(recv[1]!) } };
+  }
+
+  const pin = t.match(/^([a-z][\w .&-]{1,40}?)\s+(?:paid|sent|transferred|gave)\s+(?:me\s+|us\s+)?/);
   if (pin && amount && !/^(i|we)\b/.test(pin[1]!)) {
     return { intent: 'payment_in', confidence: 0.85, entities: { amount, currency, paymentMode, date, party: titleCase(pin[1]!) } };
   }
 
   // "paid 15000 rent" / "paid 500 for tea" / "spent 200 on fuel" → expense or supplier payment
-  if (/^(i |we )?(paid|spent|bought|purchased)\b/.test(t) && amount) {
+  if (/^(i |we )?(paid|spent|bought|purchased|gave)\b/.test(t) && amount) {
     const to = t.match(/\bto\s+([a-z][\w .&-]{1,40})$/)?.[1];
     if (to) return { intent: 'payment_out', confidence: 0.8, entities: { amount, currency, paymentMode, date, party: titleCase(to) } };
-    const desc = t.match(/\b(?:for|on)\s+(.+)$/)?.[1] ?? t.replace(/^(i |we )?(paid|spent|bought|purchased)\s+/, '').replace(/[\d,.]+\s*(k|l)?/, '').trim();
+    const desc = t.match(/\b(?:for|on)\s+(.+)$/)?.[1] ?? t.replace(/^(i |we )?(paid|spent|bought|purchased|gave)\s+/, '').replace(/[\d,.]+\s*(k|l)?/, '').trim();
     return { intent: 'record_expense', confidence: 0.85, entities: { amount, currency, paymentMode, date, description: desc || undefined } };
   }
 
   // "sold 5000 to ravi" / "sale 5000 ravi"
   const sale = t.match(/^(?:sold|sale|invoice|bill)\b.*?\bto\s+([a-z][\w .&-]{1,40})$/);
   if (/^(sold|sale|invoice)\b/.test(t) && amount) {
-    return { intent: 'record_sale', confidence: sale ? 0.85 : 0.7, entities: { amount, currency, paymentMode, date, party: sale ? titleCase(sale[1]!) : undefined } };
-  }
-
-  if (/^(add|new)\s+(customer|supplier|party|vendor)\b/.test(t)) {
-    return { intent: 'add_party', confidence: 0.85, entities: { party: titleCase(t.replace(/^(add|new)\s+(customer|supplier|party|vendor)\s*/, '')) || undefined } };
+    const party = sale?.[1]!.replace(/\s+(?:for|of|worth)\s+.*$/, '');
+    return { intent: 'record_sale', confidence: party ? 0.85 : 0.7, entities: { amount, currency, paymentMode, date, party: party ? titleCase(party) : undefined } };
   }
 
   if (/^(how much|what|who|show|list|total)\b|\?$/.test(t)) {

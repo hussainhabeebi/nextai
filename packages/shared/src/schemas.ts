@@ -142,6 +142,10 @@ export const intentResultSchema = z.object({
       paymentMode: z.string().optional(),
       report: z.string().optional(),
       question: z.string().optional(),
+      /** add_party / add_account: customer, supplier, expense, income, bank or cash. */
+      kind: z.string().optional(),
+      /** add_account: the ledger name, e.g. "Fuel". (add_party uses `party`.) */
+      accountName: z.string().optional(),
     })
     .default({}),
 });

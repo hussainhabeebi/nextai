@@ -4,6 +4,7 @@ import { seed } from '../prisma/seed.js';
 import { buildApp } from '../src/app.js';
 import { tenantDb } from '../src/lib/db.js';
 import { postDraft } from '../src/modules/drafts/service.js';
+import { erpContext } from '../src/modules/erpnext/mappers.js';
 import { preparePdf, processOcr, sniffMime } from '../src/modules/ocr/pipeline.js';
 import { validateExtraction } from '../src/modules/ocr/validate.js';
 import { similarity } from '../src/modules/ocr/match.js';
@@ -48,6 +49,48 @@ async function sendBill(bytes: Uint8Array, conversationId: number, tenant = A) {
 }
 const say = (text: string, conversationId: number, tenant = A) =>
   postCw(app, cwMessage({ inboxId: tenant.tenant.cwInboxId!, phone: tenant.owner.phone!, content: text, conversationId }));
+const sayAs = (text: string, conversationId: number, tenant: typeof A) => say(text, conversationId, tenant);
+
+describe('creating accounts from WhatsApp', () => {
+  it('adds a supplier or customer once, asks what an account is when unclear, and adds ledgers under the right group', async () => {
+    const T = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } }); // own books: ledgers added here stay out of other tests
+    const erp = c.erp(T.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    const company = erpContext(T.tenant).company;
+    const docs = () => c.erps.get(T.tenant.id)!.docs;
+    const group = (name: string, root_type: string, account_type = '') =>
+      erp.create('Account', { name, account_name: name.replace(/ - AIL$/, ''), company, is_group: 1, root_type, account_type, parent_account: `${root_type} - AIL` });
+    await group('Indirect Expenses - AIL', 'Expense');
+    await group('Bank Accounts - AIL', 'Asset', 'Bank');
+    c.chatwoot(T.tenant);
+    const cw = () => c.cws.get(T.tenant.id)!;
+    const say = (text: string, conversationId: number) => sayAs(text, conversationId, T);
+
+    const id = ++conv;
+    await say('Create supplier account AM Motors', id);
+    expect(cw().lastText(id)).toMatch(/Supplier "AM Motors" added/);
+    expect(docs().get('Supplier')!.get('AM Motors')).toMatchObject({ supplier_name: 'AM Motors', supplier_group: 'All Supplier Groups' });
+    await say('add am motors as a vendor', id);
+    expect(cw().lastText(id)).toMatch(/already in your books/);
+    expect([...docs().get('Supplier')!.values()].filter((s) => String(s.supplier_name).toLowerCase() === 'am motors')).toHaveLength(1);
+
+    await say('create account for Kochi Bakers', id);
+    expect(cw().lastText(id)).toMatch(/What is Kochi Bakers\?[\s\S]*1\. Customer[\s\S]*2\. Supplier/);
+    await say('1', id);
+    expect(cw().lastText(id)).toMatch(/Customer "Kochi Bakers" added/);
+    expect(docs().get('Customer')!.get('Kochi Bakers')).toBeDefined();
+
+    await say('create expense account Fuel', id);
+    expect(cw().lastText(id)).toMatch(/Expense account "Fuel" added to your books under Indirect Expenses/);
+    expect([...docs().get('Account')!.values()].find((a) => a.account_name === 'Fuel')).toMatchObject({ parent_account: 'Indirect Expenses - AIL', is_group: 0, company });
+    await say('open bank account HDFC Current', id);
+    expect([...docs().get('Account')!.values()].find((a) => a.account_name === 'HDFC Current')).toMatchObject({ parent_account: 'Bank Accounts - AIL', account_type: 'Bank' });
+
+    await say('add a customer', id);
+    expect(cw().lastText(id)).toMatch(/customer name/);
+    await say('shop 24', id);
+    expect(cw().lastText(id)).toMatch(/Customer "Shop 24" added/);
+  });
+});
 
 describe('OCR → draft → confirm → post', () => {
   it('posts a purchase invoice to ERPNext after "1", attaches the bill and learns the vendor', async () => {

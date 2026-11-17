@@ -183,10 +183,10 @@ export async function summaryFigures(c: Container, tenant: Tenant, at = new Date
   const today = posted.filter((d) => (d.payload as DraftPayload).date === day);
   const sum = (types: string[]) => today.filter((d) => types.includes(d.type)).reduce((s, d) => s + (d.payload as DraftPayload).total, 0);
   const cur = tenant.currency as Currency;
-  let cash = 0;
+  let cash: string = 'not available right now'; // never a made-up ₹0.00 when ERPNext can't be read
   try {
     const b = await c.erp(tenant).getBalances(company);
-    cash = b.cash + b.bank;
+    cash = formatMoney(b.cash + b.bank, cur);
   } catch (err) {
     logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'balances unavailable for summary');
   }
@@ -194,7 +194,7 @@ export async function summaryFigures(c: Container, tenant: Tenant, at = new Date
   const vars = {
     sales: formatMoney(sum(['sales_invoice']), cur),
     expenses: formatMoney(sum(['purchase_invoice', 'journal_entry']), cur),
-    cash: formatMoney(cash, cur),
+    cash,
     pending: String(pending),
   };
   return { day, vars };

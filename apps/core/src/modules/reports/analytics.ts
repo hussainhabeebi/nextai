@@ -1,9 +1,13 @@
 /**
  * Business analytics read from the ERPNext general ledger, so every entry counts: WhatsApp, the app, AND anything
- * entered directly in ERPNext ("two-way"). A few grouped queries (sum per account / month / party), then a pure
- * `buildAnalytics` that turns them into KPIs, trends, breakdowns and plain-language insights.
+ * entered directly in ERPNext ("two-way"). Plain row reads, totalled here (sum per account / month / party), then a
+ * pure `buildAnalytics` that turns them into KPIs, trends, breakdowns and plain-language insights.
+ *
+ * Totals are added up in this file rather than by ERPNext: newer Frappe versions reject SQL functions written as
+ * field strings ("sum(debit) as debit"), and the dict form they want instead cannot group by month and does not
+ * exist on older versions. Plain columns work everywhere.
  */
-import type { ErpClient, ReportResult } from '@nextai/erpnext-client';
+import type { ErpClient, ListOptions, ReportResult } from '@nextai/erpnext-client';
 import { formatMoney, type Currency } from '@nextai/shared';
 import type { Tenant } from '@prisma/client';
 import type { Container } from '../../container.js';
@@ -70,6 +74,49 @@ type Row = Record<string, unknown>;
 const num = (v: unknown) => (typeof v === 'number' ? v : Number(v) || 0);
 const round = (v: number) => Math.round(v * 100) / 100;
 
+const PAGE = 1000;
+const MAX_ROWS = 200_000;
+/** Every matching row, page by page (stable order so pages don't overlap). Refuses rather than total a partial set. */
+async function listAll<T>(erp: ErpClient, doctype: string, opts: Omit<ListOptions, 'limit' | 'start' | 'orderBy'>): Promise<T[]> {
+  const out: T[] = [];
+  for (let start = 0; ; start += PAGE) {
+    const page = await erp.list<T>(doctype, { ...opts, orderBy: 'name asc', limit: PAGE, start });
+    out.push(...page);
+    if (page.length < PAGE) return out;
+    if (out.length >= MAX_ROWS) throw new Error(`more than ${MAX_ROWS.toLocaleString('en')} ${doctype} rows in this range`);
+  }
+}
+
+type GlRow = { account: string; debit: unknown; credit: unknown; posting_date?: string };
+/** Debit and credit per account (or per month + account when `byMonth`). */
+function sumGl(rows: GlRow[]): GlSum[];
+function sumGl(rows: GlRow[], byMonth: true): GlMonth[];
+function sumGl(rows: GlRow[], byMonth = false): Array<GlSum & { month?: string }> {
+  const groups = new Map<string, GlSum & { month?: string }>();
+  for (const r of rows) {
+    const month = byMonth ? String(r.posting_date ?? '').slice(0, 7) : undefined;
+    const key = byMonth ? `${month}|${r.account}` : r.account;
+    const g = groups.get(key) ?? (byMonth ? { month, account: r.account, debit: 0, credit: 0 } : { account: r.account, debit: 0, credit: 0 });
+    g.debit += num(r.debit);
+    g.credit += num(r.credit);
+    groups.set(key, g);
+  }
+  return [...groups.values()];
+}
+
+/** Net total and invoice count per party, biggest first. */
+function sumParties(rows: Array<{ party?: string; total: unknown }>, top = 10): PartySum[] {
+  const groups = new Map<string, PartySum>();
+  for (const r of rows) {
+    const party = r.party ?? '';
+    const g = groups.get(party) ?? { party, total: 0, n: 0 };
+    g.total += num(r.total);
+    g.n += 1;
+    groups.set(party, g);
+  }
+  return [...groups.values()].sort((a, b) => b.total - a.total).slice(0, top);
+}
+
 export interface RawAnalytics {
   types: Map<string, ChartEntry>;
   current: GlSum[];
@@ -97,35 +144,27 @@ export async function fetchAnalytics(c: Container, tenant: Tenant, current: Peri
     }
   };
   const glBase = [['company', '=', ctx.company], ['is_cancelled', '=', 0]] as Array<[string, string, unknown]>;
-  const sums = (from: string, to: string) =>
-    erp.list<GlSum>('GL Entry', {
-      filters: [...glBase, ['posting_date', 'between', [from, to]]],
-      fields: ['account', 'sum(debit) as debit', 'sum(credit) as credit'],
-      groupBy: 'account',
-      limit: 5000,
-    });
+  const sums = async (from: string, to: string) =>
+    sumGl(await listAll<GlRow>(erp, 'GL Entry', { filters: [...glBase, ['posting_date', 'between', [from, to]]], fields: ['name', 'account', 'debit', 'credit'] }));
   const now = new Date(`${current.to}T00:00:00Z`);
   const trendFrom = ymd(now.getUTCFullYear(), now.getUTCMonth() - (monthsBack - 1), 1);
-  const partyTotals = (doctype: 'Sales Invoice' | 'Purchase Invoice', field: 'customer' | 'supplier') =>
-    erp.list<{ party: string; total: number; n: number }>(doctype, {
+  const partyTotals = async (doctype: 'Sales Invoice' | 'Purchase Invoice', field: 'customer' | 'supplier') => {
+    const rows = await listAll<Record<string, unknown>>(erp, doctype, {
       filters: [['company', '=', ctx.company], ['docstatus', '=', 1], ['posting_date', 'between', [current.from, current.to]]],
-      fields: [`${field} as party`, 'sum(base_net_total) as total', 'count(name) as n'],
-      groupBy: field,
-      orderBy: 'total desc',
-      limit: 10,
+      fields: ['name', field, 'base_net_total'],
     });
+    return sumParties(rows.map((r) => ({ party: r[field] as string | undefined, total: r.base_net_total })));
+  };
 
   const [types, cur, prev, months, customers, suppliers, receivables, payables] = await Promise.all([
     attempt('chart of accounts', () => chartTypes(erp, ctx, tenant.id), new Map<string, ChartEntry>()),
     attempt('ledger (this period)', () => sums(current.from, current.to), [] as GlSum[]),
     attempt('ledger (previous period)', () => sums(previous.from, previous.to), [] as GlSum[]),
-    attempt('monthly trend', () =>
-      erp.list<GlMonth>('GL Entry', {
+    attempt('monthly trend', async () =>
+      sumGl(await listAll<GlRow>(erp, 'GL Entry', {
         filters: [...glBase, ['posting_date', 'between', [trendFrom, current.to]]],
-        fields: ['date_format(posting_date, "%Y-%m") as month', 'account', 'sum(debit) as debit', 'sum(credit) as credit'],
-        groupBy: 'month, account',
-        limit: 20000,
-      }), [] as GlMonth[]),
+        fields: ['name', 'posting_date', 'account', 'debit', 'credit'],
+      }), true), [] as GlMonth[]),
     attempt('customers', () => partyTotals('Sales Invoice', 'customer'), [] as PartySum[]),
     attempt('suppliers', () => partyTotals('Purchase Invoice', 'supplier'), [] as PartySum[]),
     attempt('receivables', () => runReport(c, tenant, 'receivables'), null as ReportResult | null),
@@ -133,13 +172,11 @@ export async function fetchAnalytics(c: Container, tenant: Tenant, current: Peri
   ]);
   const moneyAccounts = [...types.entries()].filter(([, t]) => t.accountType === 'Cash' || t.accountType === 'Bank').map(([n]) => n);
   const balances = moneyAccounts.length
-    ? await attempt('cash & bank balances', () =>
-        erp.list<GlSum>('GL Entry', {
+    ? await attempt('cash & bank balances', async () =>
+        sumGl(await listAll<GlRow>(erp, 'GL Entry', {
           filters: [...glBase, ['account', 'in', moneyAccounts], ['posting_date', '<=', current.to]],
-          fields: ['account', 'sum(debit) as debit', 'sum(credit) as credit'],
-          groupBy: 'account',
-          limit: 500,
-        }), null as GlSum[] | null)
+          fields: ['name', 'account', 'debit', 'credit'],
+        })), null as GlSum[] | null)
     : null;
   return { types, current: cur, previous: prev, months, balances, customers, suppliers, receivables, payables, errors };
 }
@@ -339,12 +376,10 @@ export async function dayTotals(c: Container, tenant: Tenant, day: string): Prom
   const erp = c.erp(tenant);
   const [types, rows] = await Promise.all([
     chartTypes(erp, ctx, tenant.id),
-    erp.list<GlSum>('GL Entry', {
+    listAll<GlRow>(erp, 'GL Entry', {
       filters: [['company', '=', ctx.company], ['is_cancelled', '=', 0], ['posting_date', '=', day]],
-      fields: ['account', 'sum(debit) as debit', 'sum(credit) as credit'],
-      groupBy: 'account',
-      limit: 2000,
-    }),
+      fields: ['name', 'account', 'debit', 'credit'],
+    }).then((r) => sumGl(r)),
   ]);
   const r = byRoot(rows, types);
   return { income: round(r.incomeTotal), expenses: round(r.expenseTotal) };

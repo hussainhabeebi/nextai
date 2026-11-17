@@ -47,7 +47,7 @@ export const en = {
   'bot.editPrompt': 'What should I change? e.g. "amount 1200" or "supplier ABC Traders"',
   'bot.missingField': 'Please tell me the {field}.',
   'bot.help':
-    'You can:\n• Send a bill photo/PDF\n• "Sold 5000 to Ravi"\n• "Ravi paid 2000"\n• "Paid rent 15000"\n• "Report P&L"\n• "How much do customers owe me?"',
+    'You can:\n• Send a bill photo/PDF\n• "Sold 5000 to Ravi"\n• "Ravi paid 2000"\n• "Paid rent 15000"\n• "Add supplier AM Motors"\n• "Create expense account Fuel"\n• "Report P&L"\n• "How much do customers owe me?"',
   'bot.error': 'Sorry, something went wrong. We are looking into it.',
   'bot.reportReady': 'Here is your {report}.',
   'bot.reminder': 'Hi {party}, a friendly reminder that {amount} is due for invoice {ref}. Thank you!',
