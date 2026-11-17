@@ -49,6 +49,16 @@ export const envSchema = z.object({
   MAIL_REPLY_TO: optionalEmail,
   /** Recipients of the morning platform report (report.admin_daily). */
   ADMIN_REPORT_EMAILS: csv,
+  /** Public website (signup form). Allowed by CORS on /v1/signup only. */
+  LANDING_URL: z.string().url().default('https://nextaierp.com'),
+  SIGNUP_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false'),
+  /** Shared ERPNext site: self-signup creates one company per client here. Empty = admin connects ERPNext. */
+  ERPNEXT_SHARED_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  ERPNEXT_SHARED_API_KEY: z.string().optional(),
+  ERPNEXT_SHARED_API_SECRET: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_PUBLISHABLE_KEY: z.string().optional(),

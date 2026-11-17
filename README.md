@@ -174,7 +174,7 @@ Without R2 credentials, uploads go to the shared `uploads` volume (`/data/storag
 - WebAuthn sign-in and web-push sending are not implemented yet (push subscriptions are stored).
 - Multi-page captures from the app are processed as separate documents.
 - Razorpay provider is a stub. Legal pages on the landing site are placeholders.
-- The landing signup form posts to `PUBLIC_SIGNUP_ENDPOINT` (default `https://api.nextaierp.com/v1/signup`); that
-  self-signup endpoint is not implemented in core yet — tenants are created via the admin provisioning wizard.
+- Self-signup: the landing form posts to `/v1/signup` (email code → trial business → own company in the shared
+  ERPNext site via `ERPNEXT_SHARED_*`); the client's WhatsApp number is still connected by an admin. See docs/go-live.md §1c.
 - Plans follow the published UAE pricing (Base AED 99 / 1 user, Growth AED 299 / 4 users, Pro AED 599 / 10 users);
   INR prices are placeholders until India pricing is confirmed.

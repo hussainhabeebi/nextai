@@ -14,6 +14,9 @@ import { seed } from '../prisma/seed.js';
 import { buildApp } from '../src/app.js';
 import { tenantDb } from '../src/lib/db.js';
 import { signAccess } from '../src/modules/auth/tokens.js';
+import { resetEnvCache } from '../src/config/env.js';
+import { setupTenantErp } from '../src/modules/erpnext/company-setup.js';
+import { withSystemTx } from '../src/lib/db.js';
 import { closeShared, createTenant, drain, extractionBytes, testContainer } from './helpers.js';
 import { cwMessage, postCw } from './webhook-helpers.js';
 
@@ -174,6 +177,57 @@ live('ERPNext live posting', () => {
     expect(doc.doctype).toBe('Payment Entry');
     expect(doc.payment_type).toBe('Pay');
     expect(doc.paid_amount).toBe(1000);
-    expect(doc.party).toBe(`Gulf Office Supplies ${run[0]!.toUpperCase()}${run.slice(1)}`); // no "By Bank" in the name
+    // matched to the existing supplier (ERPNext names are case-insensitive), and no "By Bank" in the name
+    expect(String(doc.party).toLowerCase()).toBe(`gulf office supplies ${run}`);
   }, 120_000);
+
+  it('self-signup: creates the client its own company in the shared site, then entries post into it', async () => {
+    process.env.ERPNEXT_SHARED_URL = URL_;
+    process.env.ERPNEXT_SHARED_API_KEY = process.env.ERPNEXT_TEST_KEY;
+    process.env.ERPNEXT_SHARED_API_SECRET = process.env.ERPNEXT_TEST_SECRET;
+    resetEnvCache();
+    try {
+      const T = await createTenant(c.prisma, { name: `Signup Test ${run}`, country: 'AE', currency: 'AED' });
+      await withSystemTx(c.prisma, (tx) => tx.tenant.update({ where: { id: T.tenant.id }, data: { erpApiKeyEnc: null, erpApiSecretEnc: null, erpSiteUrl: null } }));
+      const r = await setupTenantErp(c, T.tenant.id);
+      expect(r.status, r.note).toBe('done');
+      expect(r.note).not.toMatch(/warning/); // fiscal year + VAT template present
+      const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: T.tenant.id } }));
+      const settings = tenant.settings as { erpCompany: string; companyAbbr: string };
+      const co = await erp.get('Company', settings.erpCompany);
+      expect(co).toMatchObject({ country: 'United Arab Emirates', default_currency: 'AED', abbr: settings.companyAbbr });
+
+      const sayT = (text: string, id: number) => postCw(app, cwMessage({ inboxId: tenant.cwInboxId!, phone: T.owner.phone!, content: text, conversationId: id }));
+      const id = ++conv;
+      const url = `https://app.aiingo.com/rails/active_storage/${Math.random()}.jpg`;
+      c.chatwoot(tenant);
+      c.cws.get(tenant.id)!.attachments.set(url, {
+        content: extractionBytes({ supplierName: `Signup Supplier ${run}`, supplierTaxId: null, invoiceNo: `SS-${run}`, currency: 'AED', lines: [{ description: 'Printer paper', qty: 2, rate: 50, amount: 100 }], subtotal: 100, tax: { cgst: 0, sgst: 0, igst: 0, vat: 5 }, total: 105, paymentMode: 'credit' }),
+        mime: 'image/jpeg',
+      });
+      await postCw(app, cwMessage({ inboxId: tenant.cwInboxId!, phone: T.owner.phone!, attachments: [{ file_type: 'image', data_url: url }], conversationId: id }));
+      await drain(c);
+      await sayT('1', id);
+      await drain(c);
+      const db = tenantDb(c.prisma, tenant.id);
+      const bill = (await db.draft.findFirst({ where: { conversationId: id } }))!;
+      expect(bill.error ?? '').toBe('');
+      expect(bill.status).toBe('posted');
+      const pinv = await erp.get(bill.erpDoctype!, bill.erpName!);
+      expect(pinv).toMatchObject({ company: settings.erpCompany, docstatus: 1, grand_total: 105, taxes_and_charges: `UAE VAT 5% - ${settings.companyAbbr}` });
+
+      const id2 = ++conv;
+      await sayT('paid 300 on petrol', id2);
+      await sayT('1', id2);
+      await drain(c);
+      const je = (await db.draft.findFirst({ where: { conversationId: id2 } }))!;
+      expect(je.status, je.error ?? '').toBe('posted');
+      expect((await erp.get('Journal Entry', je.erpName!)).company).toBe(settings.erpCompany);
+    } finally {
+      delete process.env.ERPNEXT_SHARED_URL;
+      delete process.env.ERPNEXT_SHARED_API_KEY;
+      delete process.env.ERPNEXT_SHARED_API_SECRET;
+      resetEnvCache();
+    }
+  }, 180_000);
 });
