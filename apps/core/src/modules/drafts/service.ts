@@ -6,7 +6,8 @@ import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { audit } from '../audit/audit.js';
-import { DOCTYPE_FOR, applyTaxTemplate, erpContext, partyDoc, resolveAccounts, toErpDoc } from '../erpnext/mappers.js';
+import { DOCTYPE_FOR, applyTaxTemplate, erpContext, partyDoc, partyPlacement, resolveAccounts, toErpDoc } from '../erpnext/mappers.js';
+import { createLedger, type LedgerKind } from '../erpnext/create-account.js';
 
 export interface Actor {
   id?: string | null;
@@ -32,6 +33,7 @@ const TYPE_LABEL: Record<DraftType, string> = {
 export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Language): string {
   const p = draft.payload as DraftPayload;
   const party = p.partyName ? `${draft.type === 'sales_invoice' || draft.type === 'payment_in' ? 'Customer' : 'Supplier'}: ${p.partyName}` : (p.remarks ?? '');
+  const received = draft.type === 'journal_entry' && p.direction === 'in';
   const extra = [
     p.billNo ? `Bill no: ${p.billNo}` : undefined,
     p.lines.length > 1 ? `${p.lines.length} items` : p.lines[0]?.description,
@@ -39,14 +41,15 @@ export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Langua
       ? `Tax: ${Object.entries(p.taxes).filter(([, v]) => (v ?? 0) > 0).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(', ')}`
       : undefined,
     (draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && p.expenseAccount ? `Account: ${p.expenseAccount.replace(/\s+-\s+[^-]+$/, '')}` : undefined,
-    p.paymentMode && !['unknown', 'credit'].includes(p.paymentMode) ? `Paid by: ${p.paymentMode}` : undefined,
+    draft.type === 'journal_entry' && p.newAccount && !p.expenseAccount ? `Account: ${p.newAccount.name} (new ${p.newAccount.kind} account, created when you confirm)` : undefined,
+    p.paymentMode && !['unknown', 'credit'].includes(p.paymentMode) ? `${received ? 'Received in' : 'Paid by'}: ${p.paymentMode}` : undefined,
     p.validationIssues.length ? `⚠️ ${p.validationIssues.join('; ')}` : undefined,
   ]
     .filter(Boolean)
     .join('\n');
   return (
     t(lang, 'bot.draftSummary', {
-      type: TYPE_LABEL[draft.type],
+      type: received ? '💰 Money received' : draft.type === 'journal_entry' && p.direction === 'out' ? '💸 Money paid' : TYPE_LABEL[draft.type],
       party: [party, extra].filter(Boolean).join('\n'),
       date: p.date,
       total: formatMoney(p.total, p.currency as Currency),
@@ -179,7 +182,8 @@ async function ensureParty(c: Container, tenant: Tenant, kind: 'Customer' | 'Sup
   const found = await erp.list(kind, { filters: [['name', '=', p.partyName]], limit: 1 });
   if (found.length === 0) {
     // Draft was confirmed by the user → creating the party is authorised.
-    await erp.create(kind, partyDoc(kind, p.partyName, { taxId: p.partyTaxId, phone: p.partyPhone, country: tenant.country }));
+    const placement = await partyPlacement(erp, kind, tenant.id, tenant.country);
+    await erp.create(kind, partyDoc(kind, p.partyName, { taxId: p.partyTaxId, phone: p.partyPhone, country: tenant.country, ...placement }));
   }
 }
 
@@ -201,6 +205,12 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
   try {
     if (draft.type === 'purchase_invoice' || draft.type === 'payment_out') await ensureParty(c, tenant, 'Supplier', p);
     if (draft.type === 'sales_invoice' || draft.type === 'payment_in') await ensureParty(c, tenant, 'Customer', p);
+    if (draft.type === 'journal_entry' && p.newAccount && !p.expenseAccount) {
+      // Confirmed by the user → creating the ledger shown in the summary ("New capital account: Hussain") is authorised.
+      const made = await createLedger(c, tenant, { kind: p.newAccount.kind as LedgerKind, name: p.newAccount.name });
+      p.expenseAccount = made.name;
+      await db.draft.update({ where: { id: draftId }, data: { payload: p } });
+    }
 
     let erpName = draft.erpName;
     if (!erpName) {

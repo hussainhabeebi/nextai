@@ -121,6 +121,10 @@ export const draftPayloadSchema = z.object({
   remarks: z.string().optional(),
   documentId: z.string().uuid().optional(),
   createParty: z.boolean().optional(),
+  /** Journal entry: "out" = money paid from cash/bank (default), "in" = money received into cash/bank. */
+  direction: z.enum(['in', 'out']).optional(),
+  /** Journal entry: the ledger to create on confirm when it doesn't exist yet (e.g. a new capital account). */
+  newAccount: z.object({ kind: z.string(), name: z.string() }).optional(),
   validationIssues: z.array(z.string()).default([]),
 });
 export type DraftPayload = z.infer<typeof draftPayloadSchema>;

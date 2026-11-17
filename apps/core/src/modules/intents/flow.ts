@@ -11,7 +11,7 @@ import { say } from '../chatwoot/context.js';
 import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, summaryText, updateDraftPayload } from '../drafts/service.js';
 import { erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
 import { chooseExpenseAccount } from '../erpnext/expense-account.js';
-import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind } from '../erpnext/create-account.js';
+import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind, ledgerTarget } from '../erpnext/create-account.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 
@@ -252,6 +252,30 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
     case 'payment_out': {
       if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
       if (!e.party) return askFor(ctx, intent, 'party', intent.intent === 'payment_in' ? 'customer name' : 'supplier name');
+      const direction = intent.intent === 'payment_in' ? 'in' : 'out';
+      let target;
+      try {
+        target = await ledgerTarget(c, tenant, e.party, direction, e.description);
+      } catch (err) {
+        logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'chart unavailable; treating as customer/supplier');
+      }
+      if (target) {
+        // Owner's capital, drawings, a loan, or another ledger: a journal entry against it, not a customer/supplier payment.
+        const payload: DraftPayload = {
+          date: e.date ?? today,
+          currency,
+          lines: [],
+          total: e.amount,
+          paymentMode: e.paymentMode ?? 'cash',
+          direction,
+          expenseAccount: target.account,
+          newAccount: target.newAccount,
+          remarks: target.label,
+          validationIssues: [],
+        };
+        await createDraft(c, tenant, { ...base, type: 'journal_entry', payload, confidence: intent.confidence });
+        return;
+      }
       const payload: DraftPayload = {
         partyName: e.party,
         date: e.date ?? today,

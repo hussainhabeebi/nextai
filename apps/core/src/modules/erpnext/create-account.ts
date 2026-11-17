@@ -7,7 +7,7 @@
 import type { AccountKind } from '@nextai/shared';
 import type { Tenant } from '@prisma/client';
 import type { Container } from '../../container.js';
-import { clearAccountCache, erpContext, partyDoc } from './mappers.js';
+import { clearAccountCache, erpContext, partyDoc, partyPlacement } from './mappers.js';
 
 export type LedgerKind = Exclude<AccountKind, 'customer' | 'supplier'>;
 export const isPartyKind = (k: AccountKind): k is 'customer' | 'supplier' => k === 'customer' || k === 'supplier';
@@ -64,7 +64,8 @@ export async function createParty(c: Container, tenant: Tenant, kind: 'customer'
   ]);
   const existing = [...byName, ...byTitle].find((r) => same(r.name, name) || same(r[field], name));
   if (existing) return { created: false, name: String(existing.name) };
-  const created = await erp.create<{ name?: string }>(doctype, partyDoc(doctype, name, { country: tenant.country }));
+  const placement = await partyPlacement(erp, doctype, tenant.id, tenant.country);
+  const created = await erp.create<{ name?: string }>(doctype, partyDoc(doctype, name, { country: tenant.country, ...placement }));
   return { created: true, name: created.name ?? name };
 }
 
@@ -136,6 +137,7 @@ export async function createLedger(c: Container, tenant: Tenant, opts: { kind?: 
   // A bank/cash/tax/stock/fixed-asset type only fits under a group of the same nature; otherwise leave the type empty.
   const accountType = place?.accountType && (parent.root_type ?? place.rootType) === place.rootType ? place.accountType : undefined;
   const created = await c.erp(tenant).create<{ name?: string }>('Account', {
+    name: `${opts.name} - ${ctx.abbr}`, // ERPNext names accounts this way itself; given for clients that don't
     account_name: opts.name,
     parent_account: parent.name,
     company: ctx.company,
@@ -145,4 +147,55 @@ export async function createLedger(c: Container, tenant: Tenant, opts: { kind?: 
   });
   clearAccountCache(tenant.id); // so the new ledger can be picked for bills straight away
   return { created: true, name: created.name ?? `${opts.name} - ${ctx.abbr}`, group: short(parent.name) };
+}
+
+const CAPITAL_WORDS = /\b(capital|owner'?s?|directors?'?|partners?'?|proprietors?'?|promoters?'?|shareholders?'?|drawings?|equity)\b/i;
+const LOAN_WORDS = /\b(loans?|borrow(?:ed|ing)?|overdraft|od)\b/i;
+const NOT_A_NAME = /\b(capital|account|a\/c|acc|ledger|owner'?s?|directors?'?|partners?'?|proprietors?'?|promoters?'?|shareholders?'?|drawings?|equity|loans?|borrow(?:ed|ing)?|overdraft|od|mr|mrs|ms|the|my|our|from|by|as|introduced|invested|contribution|investment)\b\.?/gi;
+const MONEY_TYPES = new Set(['Receivable', 'Payable', 'Bank', 'Cash']);
+
+export interface LedgerTarget {
+  /** The existing ledger to post against. */
+  account?: string;
+  /** Or the ledger to create on confirm. */
+  newAccount?: { kind: LedgerKind; name: string };
+  /** "Capital introduced by Hussain", "Loan received from SBI", "Received from Commission". */
+  label: string;
+}
+
+/**
+ * Money in from / out to something that is not a customer or supplier: the owner's or a director's capital
+ * ("received 50000 from Hussain capital account", "director Hussain brought in 1 lakh"), a loan ("loan from SBI"),
+ * drawings, or any existing ledger named in the message. These are journal entries against that ledger, not
+ * customer receipts or supplier payments. Returns undefined for ordinary customers and suppliers.
+ */
+export async function ledgerTarget(c: Container, tenant: Tenant, party: string, direction: 'in' | 'out', hint = ''): Promise<LedgerTarget | undefined> {
+  const words = `${party} ${hint}`;
+  const kind: LedgerKind | undefined = CAPITAL_WORDS.test(words) ? 'capital' : LOAN_WORDS.test(words) ? 'loan' : undefined;
+  const bare = party.replace(NOT_A_NAME, ' ').replace(/\s+/g, ' ').trim();
+  const name = bare === bare.toLowerCase() ? bare.replace(/\b\w/g, (ch) => ch.toUpperCase()) : bare;
+  const rows = await chart(c, tenant);
+  const ledgers = rows.filter((r) => Number(r.is_group) !== 1 && !MONEY_TYPES.has(r.account_type ?? ''));
+  const wanted = new Set([party, name, `${name} capital`, `${name} capital account`, `${name} drawings`, `${name} loan`, `${name} loan account`].map(squash).filter(Boolean));
+  const found = ledgers.find((l) => wanted.has(squash(short(l.name))) || wanted.has(squash(l.account_name ?? '')));
+  const label = (what: string) =>
+    kind === 'capital'
+      ? direction === 'in' ? `Capital introduced by ${what}` : `Drawings by ${what}`
+      : kind === 'loan'
+        ? direction === 'in' ? `Loan received from ${what}` : `Loan repayment to ${what}`
+        : direction === 'in' ? `Received from ${what}` : `Paid to ${what}`;
+  if (found) {
+    if (!kind) {
+      // A plain name that is also a customer/supplier stays a customer/supplier payment.
+      const erp = c.erp(tenant);
+      const [cust, supp] = await Promise.all([
+        erp.list('Customer', { filters: [['name', '=', party]], limit: 1 }),
+        erp.list('Supplier', { filters: [['name', '=', party]], limit: 1 }),
+      ]);
+      if (cust.length || supp.length) return undefined;
+    }
+    return { account: found.name, label: label(name || short(found.name)) };
+  }
+  if (kind && name) return { newAccount: { kind, name }, label: label(name) };
+  return undefined;
 }

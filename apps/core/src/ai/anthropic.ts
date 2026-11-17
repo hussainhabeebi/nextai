@@ -101,8 +101,12 @@ and English mixed with Malayalam (Manglish, e.g. "kaasu kitti", "koduthu", "vang
 Intents (pick exactly one):
 - record_expense: they spent money on something. "petrol 500", "tea 50 cash", "paid electricity bill 3200", "rent koduthu 15000"
 - record_sale: they sold or billed a customer. "sold 5000 to Ravi", "Ravi ku 2000 nte sale", "bill 3500 for Anil"
-- payment_in: a customer paid them. "Ravi paid 2000", "got 5k from Shop 24", "received 1500 from Anil by upi", "Anil kaasu thannu 1000"
-- payment_out: they paid a supplier / named person what they owed. "paid 8000 to AM Motors", "gave 500 to Suresh"
+- payment_in: money came in from someone: a customer paying, or the owner/director/partner putting in capital, or a loan received.
+  "Ravi paid 2000", "got 5k from Shop 24", "received 1500 from Anil by upi", "Anil kaasu thannu 1000",
+  "received 50000 cash from Hussain capital account" (party "Hussain capital account", description "capital"),
+  "director Hussain brought in 1 lakh" (description "capital"), "loan 2 lakh received from SBI" (party "SBI", description "loan")
+- payment_out: money went out to someone: a supplier, a named person, the owner's drawings or a loan repayment.
+  "paid 8000 to AM Motors", "gave 500 to Suresh", "Hussain took 10000 for personal use" (description "drawings"), "repaid 20000 SBI loan" (description "loan")
 - add_party: create a customer or supplier (a "party", "account", "contact" or "ledger" for a person or business).
   "Create supplier account AM Motors", "add AM Motors as vendor", "new customer Ravi Traders", "Ravi ne customer aayi add cheyyu"
 - add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
@@ -114,7 +118,7 @@ Intents (pick exactly one):
 - help: greetings or when nothing above fits.
 
 Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier name as written;
-description = what the money was for; date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
+description = what the money was for (say "capital", "drawings" or "loan" when it is one of those); date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
 kind (add_party / add_account) = one of customer, supplier, expense, direct_expense, income, direct_income, bank, cash, capital, liability, loan,
 tax, asset, fixed_asset, loan_advance, stock, investment (empty if not said); accountName (add_account) = the ledger name;
 group (add_account) = the account group if they name one ("under Capital Account" → Capital Account), else empty;

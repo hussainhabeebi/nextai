@@ -192,10 +192,17 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         cheque_no: p.referenceNo ?? (money.kind === 'cash' ? undefined : `NX-${p.documentId?.slice(0, 8) ?? Date.now()}`),
         cheque_date: p.referenceNo || money.kind !== 'cash' ? p.date : undefined,
         user_remark: remarks ?? lines.map((l) => l.description).join(', '),
-        accounts: [
-          { account: expense, debit_in_account_currency: p.total, credit_in_account_currency: 0 },
-          { account: credit, debit_in_account_currency: 0, credit_in_account_currency: p.total },
-        ],
+        // Row 0 is the other account (expense, capital, loan ...), row 1 the cash/bank (see resolveAccounts).
+        accounts:
+          p.direction === 'in'
+            ? [
+                { account: expense, debit_in_account_currency: 0, credit_in_account_currency: p.total },
+                { account: p.paidToAccount ?? money.account, debit_in_account_currency: p.total, credit_in_account_currency: 0 },
+              ]
+            : [
+                { account: expense, debit_in_account_currency: p.total, credit_in_account_currency: 0 },
+                { account: credit, debit_in_account_currency: 0, credit_in_account_currency: p.total },
+              ],
       };
     }
     case 'sales_invoice':
@@ -243,14 +250,14 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
   }
 }
 
-export function partyDoc(kind: 'Customer' | 'Supplier', name: string, extra: { taxId?: string; phone?: string; country: 'IN' | 'AE' }) {
+export function partyDoc(kind: 'Customer' | 'Supplier', name: string, extra: { taxId?: string; phone?: string; country: 'IN' | 'AE'; group?: string; territory?: string }) {
   return kind === 'Customer'
     ? {
         doctype: 'Customer',
         customer_name: name,
         customer_type: 'Company',
-        customer_group: 'All Customer Groups',
-        territory: 'All Territories',
+        customer_group: extra.group ?? 'All Customer Groups',
+        territory: extra.territory ?? 'All Territories',
         tax_id: extra.taxId,
         mobile_no: extra.phone,
         ...(extra.country === 'IN' && extra.taxId ? { gstin: extra.taxId } : {}),
@@ -258,12 +265,44 @@ export function partyDoc(kind: 'Customer' | 'Supplier', name: string, extra: { t
     : {
         doctype: 'Supplier',
         supplier_name: name,
-        supplier_group: 'All Supplier Groups',
+        supplier_group: extra.group ?? 'All Supplier Groups',
         supplier_type: 'Company',
         tax_id: extra.taxId,
         mobile_no: extra.phone,
         ...(extra.country === 'IN' && extra.taxId ? { gstin: extra.taxId } : {}),
       };
+}
+
+const TREE = {
+  'Customer Group': { field: 'customer_group_name', parent: 'parent_customer_group', root: 'All Customer Groups', prefer: /^(commercial|company|general|individual)$/i },
+  'Supplier Group': { field: 'supplier_group_name', parent: 'parent_supplier_group', root: 'All Supplier Groups', prefer: /^(local|general|services|raw material)$/i },
+  Territory: { field: 'territory_name', parent: 'parent_territory', root: 'All Territories', prefer: undefined as RegExp | undefined },
+} as const;
+const leafCache = new Map<string, string>();
+
+/**
+ * A non-group Customer Group / Supplier Group / Territory to put a new party in: ERPNext rejects the root groups
+ * ("Cannot select a Group type Customer Group"). Uses the site's own (Commercial, Local, the country ...), and
+ * creates "General" under the root when the site has none.
+ */
+export async function leafOf(erp: Pick<ErpClient, 'list' | 'create'>, doctype: keyof typeof TREE, cacheKey: string, country?: 'IN' | 'AE'): Promise<string> {
+  const key = `${cacheKey}:${doctype}`;
+  const hit = leafCache.get(key);
+  if (hit) return hit;
+  const t = TREE[doctype];
+  const rows = await erp.list<{ name: string }>(doctype, { filters: [['is_group', '=', 0]], fields: ['name'], limit: 100 });
+  const countryName = country === 'IN' ? /^india$/i : country === 'AE' ? /^(united arab emirates|uae)$/i : undefined;
+  let leaf = (countryName && rows.find((r) => countryName.test(r.name))) || (t.prefer && rows.find((r) => t.prefer!.test(r.name))) || rows[0];
+  if (!leaf) leaf = await erp.create<{ name: string }>(doctype, { name: 'General', [t.field]: 'General', [t.parent]: t.root, is_group: 0 });
+  leafCache.set(key, leaf.name);
+  return leaf.name;
+}
+
+/** Customer/supplier group (and territory) for a new party in this tenant's ERPNext. */
+export async function partyPlacement(erp: Pick<ErpClient, 'list' | 'create'>, kind: 'Customer' | 'Supplier', cacheKey: string, country: 'IN' | 'AE') {
+  return kind === 'Customer'
+    ? { group: await leafOf(erp, 'Customer Group', cacheKey), territory: await leafOf(erp, 'Territory', cacheKey, country) }
+    : { group: await leafOf(erp, 'Supplier Group', cacheKey) };
 }
 
 type AccountRole = 'bank' | 'cash' | 'expense' | 'income';
