@@ -153,10 +153,11 @@ deliver as **approved templates**. In Meta → WhatsApp Manager → Message temp
 | `nextai_invoice_pay`      | Utility        | party, business, invoice no, amount, due date, payment link |
 | `nextai_payment_reminder_pay` | Utility    | party, business, amount, invoice no, due date, payment link |
 | `nextai_tax_deadline`     | Utility        | business, what, due date, days left           |
+| `nextai_staff_invite`     | Utility        | name, business, app link                      |
 
-The last three are new: NextAi only uses them after you tick **Approved in Meta** for them in
+The last four are new: NextAi only uses them after you tick **Approved in Meta** for them in
 Admin → Templates. Until then invoices and reminders go out with the approved templates above (the payment
-link is included whenever the customer wrote in the last 24 hours) and deadline warnings as plain text.
+link is included whenever the customer wrote in the last 24 hours) deadline warnings as plain text, and the owner sends staff invites from their own WhatsApp (Settings → Team → Invite).
 
 Approval usually takes minutes to a few hours. Until then, messages only deliver to numbers that wrote to
 the inbox in the last 24 hours — fine for testing with your own phone. After approval, in Chatwoot open

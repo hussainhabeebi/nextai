@@ -14,6 +14,7 @@ import { booksContext, runReport } from '../../modules/reports/reports.js';
 import { incrementUsage } from '../../modules/usage/usage.js';
 import { tenantKey } from '../../storage/storage.js';
 import { assertWithinLimit, requireFeature } from '../../modules/billing/gating.js';
+import { inviteFor, sendInvite } from '../../modules/team/invite.js';
 
 const actorOf = (req: FastifyRequest) => ({ id: req.user!.sub, type: 'user' as const, channel: 'app' as const, ip: req.ip });
 const requireOwner = (req: FastifyRequest) => {
@@ -319,7 +320,7 @@ export const appRoutes =
       name: z.string().min(2).max(200).optional(),
       language: z.enum(['en', 'ml', 'ar']).optional(),
       settings: tenantSettingsSchema
-        .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true, taxRegime: true, taxCalendar: true, paymentLinks: true })
+        .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true, taxRegime: true, taxCalendar: true, paymentLinks: true, whatsappNumber: true })
         .partial()
         .optional(),
     });
@@ -340,21 +341,44 @@ export const appRoutes =
     // ---------------- Team ----------------
     app.get('/team', { schema: { tags: ['app'] } }, async (req) => {
       const users = await req.db!.user.findMany({ orderBy: { createdAt: 'asc' } });
-      return { items: users.map((u) => ({ id: u.id, name: u.name, phone: u.phone, role: u.role, status: u.status })) };
+      return { items: users.map((u) => ({ id: u.id, name: u.name, phone: u.phone, email: u.email, role: u.role, status: u.status })) };
     });
     app.post(
       '/team',
-      { schema: { tags: ['app'], body: z.object({ name: z.string().min(1).max(100), phone: z.string().min(8).max(20), role: z.enum(['staff', 'tenant_accountant']) }) } },
+      { schema: { tags: ['app'], body: z.object({ name: z.string().trim().min(1).max(100), phone: z.string().min(8).max(20), role: z.enum(['staff', 'tenant_accountant']), email: z.string().trim().toLowerCase().email().max(200).optional().or(z.literal('').transform(() => undefined)) }) } },
       async (req, reply) => {
         requireOwner(req);
         const t = req.tenant!;
         await assertWithinLimit(c, t, 'users');
         const phone = normalizePhone(req.body.phone, t.country);
         const exists = await req.db!.user.findFirst({ where: { phone } });
-        if (exists) throw conflict('That number is already on your team');
-        const u = await req.db!.user.create({ data: { tenantId: t.id, name: req.body.name, phone, role: req.body.role, status: 'invited' } });
+        if (exists && exists.status !== 'disabled') throw conflict('That number is already on your team');
+        // Re-adding someone who was removed brings the same member back (their history stays theirs).
+        const u = exists
+          ? await req.db!.user.update({ where: { id: exists.id }, data: { name: req.body.name, role: req.body.role, email: req.body.email ?? exists.email, status: 'invited' } })
+          : await req.db!.user.create({ data: { tenantId: t.id, name: req.body.name, phone, email: req.body.email, role: req.body.role, status: 'invited' } });
         await audit(c.prisma, { tenantId: t.id, actorId: req.user!.sub, actorType: 'user', channel: 'app', action: 'team.invite', entity: 'user', entityId: u.id, after: { name: u.name, role: u.role }, ip: req.ip });
-        return reply.code(201).send({ id: u.id, name: u.name, phone: u.phone, role: u.role, status: u.status });
+        const sent = await sendInvite(c, t, u);
+        return reply.code(201).send({ id: u.id, name: u.name, phone: u.phone, email: u.email, role: u.role, status: u.status, invite: { ...inviteFor(t, u), sentByNextAi: sent } });
+      },
+    );
+    /** The invite again (to resend from the owner's WhatsApp), or add/change a member's email for login codes. */
+    app.get('/team/:id/invite', { schema: { tags: ['app'], params: z.object({ id: z.string().uuid() }) } }, async (req) => {
+      requireOwner(req);
+      const u = await req.db!.user.findUnique({ where: { id: req.params.id } });
+      if (!u || !u.phone) throw notFound('User');
+      return inviteFor(req.tenant!, u);
+    });
+    app.patch(
+      '/team/:id',
+      { schema: { tags: ['app'], params: z.object({ id: z.string().uuid() }), body: z.object({ email: z.string().trim().toLowerCase().email().max(200).nullable().optional(), name: z.string().trim().min(1).max(100).optional() }) } },
+      async (req) => {
+        requireOwner(req);
+        const u = await req.db!.user.findUnique({ where: { id: req.params.id } });
+        if (!u) throw notFound('User');
+        const updated = await req.db!.user.update({ where: { id: u.id }, data: { email: req.body.email === undefined ? undefined : req.body.email, name: req.body.name } });
+        await audit(c.prisma, { tenantId: req.tenant!.id, actorId: req.user!.sub, actorType: 'user', channel: 'app', action: 'team.update', entity: 'user', entityId: u.id, after: { email: updated.email, name: updated.name }, ip: req.ip });
+        return { id: updated.id, name: updated.name, phone: updated.phone, email: updated.email, role: updated.role, status: updated.status };
       },
     );
     app.delete('/team/:id', { schema: { tags: ['app'], params: z.object({ id: z.string().uuid() }) } }, async (req) => {

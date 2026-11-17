@@ -268,9 +268,11 @@ export const integrationRoutes =
         if (other) throw badRequest(`Inbox ${b.inboxId} is already connected to ${other.name}`);
         let botToken: string;
         let detail: Record<string, unknown> = {};
+        let botNumber: string | undefined;
         if (b.mode === 'auto') {
           const r = await upstream(() => connectInbox(b.userToken, b.accountId, b.inboxId));
           botToken = r.botToken;
+          botNumber = r.inbox.phoneNumber ?? undefined;
           detail = { inbox: r.inbox, botId: r.botId, botCreated: r.created };
         } else {
           botToken = b.botToken;
@@ -283,6 +285,11 @@ export const integrationRoutes =
           { chatwoot: { accountId: b.accountId, inboxId: b.inboxId, botToken } },
           req.admin!.sub,
         );
+        if (botNumber) {
+          // Shown in staff invites ("send bills on WhatsApp to +971…"); the owner can change it in Settings.
+          const fresh = await loadTenant(tenant.id);
+          await sys((tx) => tx.tenant.update({ where: { id: tenant.id }, data: { settings: { ...(fresh.settings as object), whatsappNumber: botNumber } } }));
+        }
         await adminAudit(
           req,
           'chatwoot.connect',

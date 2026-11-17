@@ -59,6 +59,8 @@ export const tenantSettingsSchema = z.object({
   accounts: z.record(z.string()).default({}),
   taxTemplates: z.record(z.string()).default({}),
   autoSendInvoices: z.boolean().default(true),
+  /** The business's NextAi WhatsApp number (the bot), shown in staff invites. */
+  whatsappNumber: z.string().max(20).optional(),
   /** Online payment links (Razorpay, India) on invoices and reminders. Account/mode are set up in ERPNext on connect. */
   paymentLinks: z
     .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
