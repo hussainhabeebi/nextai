@@ -176,6 +176,11 @@ Without R2 credentials, uploads go to the shared `uploads` volume (`/data/storag
 - Razorpay provider is a stub. Legal pages on the landing site are placeholders.
 - Self-signup: the landing form posts to `/v1/signup` (email code → trial business → own company in the shared
   ERPNext site via `ERPNEXT_SHARED_*`); the client's WhatsApp number is still connected by an admin. See docs/go-live.md §1c.
+- Payment links (Razorpay, India): each business connects its own account in Settings; links go out with
+  invoices and reminders and paid links post a Payment Entry against the invoice. See docs/go-live.md §2b.
+- Daily briefing and tax deadlines (GST/TDS/ITR in India, VAT/Corporate Tax in the UAE): Settings → Tax deadlines.
+- Bank matching: statements (CSV, or PDF read by AI) and forwarded bank SMS; "bank" on WhatsApp for the rest.
+- Accountant portal: More → All my businesses, for anyone on more than one business.
 - Plans follow the published pricing, per month: Base AED 99 / ₹799 (1 user), Growth AED 299 / ₹1,999 (4 users),
   Pro AED 599 / ₹4,999 (10 users). INR prices exclude 18% GST. Payment-provider price IDs per currency are set in
   Admin → Plans.

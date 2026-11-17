@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Bot, ChevronRight, CreditCard, Landmark, LogOut, Receipt, Settings, Sparkles, Users, Wallet } from 'lucide-react';
+import { BarChart3, Banknote, Bot, Briefcase, ChevronRight, CreditCard, Landmark, LogOut, Receipt, Settings, Sparkles, Users, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { Page } from '@/components/page';
 import { Card } from '@/components/ui/card';
@@ -11,7 +11,7 @@ const LINKS = [
   { href: '/insights', label: 'Insights & analysis', icon: Sparkles },
   { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
-  { href: '/bank', label: 'Bank matching', icon: Landmark },
+  { href: '/bank', label: 'Bank matching', icon: Banknote },
   { href: '/parties', label: 'Customers & suppliers', icon: Users },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/tax', label: 'Tax centre', icon: Landmark },
@@ -22,9 +22,17 @@ const LINKS = [
 
 export default function More() {
   const { t } = useI18n();
-  const { logout, me } = useAuth();
+  const { logout, me, session } = useAuth();
+  const portal = (session?.memberships.length ?? 0) > 1 || me?.user?.role === 'tenant_accountant';
   return (
     <Page title={t('nav.more')}>
+      {portal && (
+        <Link href="/portal" className="mb-4 flex min-h-14 items-center gap-3 rounded-2xl bg-brand px-4 text-white">
+          <Briefcase className="h-5 w-5" />
+          <span className="flex-1 font-medium">All my businesses ({session?.memberships.length ?? 1})</span>
+          <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+        </Link>
+      )}
       <Card className="divide-y divide-line p-0">
         {LINKS.map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href} className="flex min-h-14 items-center gap-3 px-4">

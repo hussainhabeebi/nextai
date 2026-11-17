@@ -150,6 +150,13 @@ deliver as **approved templates**. In Meta → WhatsApp Manager → Message temp
 | `nextai_daily_summary`    | Utility        | sales, expenses, cash, pending                |
 | `nextai_billing_notice`   | Utility        | business, link                                |
 | `nextai_draft_ready`      | Utility        | summary                                       |
+| `nextai_invoice_pay`      | Utility        | party, business, invoice no, amount, due date, payment link |
+| `nextai_payment_reminder_pay` | Utility    | party, business, amount, invoice no, due date, payment link |
+| `nextai_tax_deadline`     | Utility        | business, what, due date, days left           |
+
+The last three are new: NextAi only uses them after you tick **Approved in Meta** for them in
+Admin → Templates. Until then invoices and reminders go out with the approved templates above (the payment
+link is included whenever the customer wrote in the last 24 hours) and deadline warnings as plain text.
 
 Approval usually takes minutes to a few hours. Until then, messages only deliver to numbers that wrote to
 the inbox in the last 24 hours — fine for testing with your own phone. After approval, in Chatwoot open
@@ -190,6 +197,23 @@ If nothing arrives: check `docker compose logs core | grep chatwoot`. 403 = wron
 `CHATWOOT_ALLOWED_IPS`; 401 = wrong `?token=`; `unknown_inbox` = Inbox ID mismatch.
 
 ---
+
+## 2b. Online payments with Razorpay (5 min per business, India)
+
+Each business uses **its own** Razorpay account, so money goes straight to it.
+
+1. The owner opens NextAi → More → Settings → **Online payments (Razorpay)**, pastes the Key ID and Key
+   secret (Razorpay → Account & Settings → API Keys; test keys work for a trial run) and taps **Connect**.
+   NextAi checks the keys and sets ERPNext up: a **Razorpay Clearing** bank ledger, a **Razorpay** Mode of
+   Payment, and ERPNext's own Razorpay Settings if the Frappe *payments* app is installed.
+2. In Razorpay → Account & Settings → **Webhooks** → Add: the URL and secret shown after connecting, event
+   `payment_link.paid`. (The secret is shown once; disconnect and connect again for a new one.)
+3. Test: send an invoice, pay its link with test UPI, and check a Payment Entry against the invoice appears in
+   ERPNext and the owner gets "💰 … paid … online".
+
+Razorpay settles to the bank a day or two later, minus its fee. When that bank line is imported (statement or
+SMS), NextAi proposes moving it from Razorpay Clearing to the bank; the small balance left in Razorpay Clearing
+is the fee — book it to bank charges at month end.
 
 ## 3. Email reports with Resend (15 min + DNS propagation)
 
