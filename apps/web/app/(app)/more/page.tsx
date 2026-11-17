@@ -11,6 +11,7 @@ const LINKS = [
   { href: '/insights', label: 'Insights & analysis', icon: Sparkles },
   { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
+  { href: '/bank', label: 'Bank matching', icon: Landmark },
   { href: '/parties', label: 'Customers & suppliers', icon: Users },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/tax', label: 'Tax centre', icon: Landmark },

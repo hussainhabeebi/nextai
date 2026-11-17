@@ -139,6 +139,8 @@ export const draftPayloadSchema = z.object({
   remarks: z.string().optional(),
   documentId: z.string().uuid().optional(),
   createParty: z.boolean().optional(),
+  /** Payment: the invoice (sales for payment_in, purchase for payment_out) this payment settles. */
+  invoiceRef: z.string().optional(),
   /** Journal entry: "out" = money paid from cash/bank (default), "in" = money received into cash/bank. */
   direction: z.enum(['in', 'out']).optional(),
   /** Journal entry: the ledger to create on confirm when it doesn't exist yet (e.g. a new capital account). */

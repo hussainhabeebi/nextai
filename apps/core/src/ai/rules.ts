@@ -160,6 +160,8 @@ export function ruleClassify(text: string): IntentResult | undefined {
     return { intent: 'briefing', confidence: 0.9, entities: {} };
   }
 
+  if (/^(bank|bank lines?|check bank|bank check|reconcile|bank reconciliation|match bank)$/.test(t)) return { intent: 'bank', confidence: 0.9, entities: {} };
+
   const create = parseCreateAccount(text);
   if (create) return create;
 

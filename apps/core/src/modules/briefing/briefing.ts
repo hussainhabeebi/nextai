@@ -88,7 +88,7 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
       })
       .catch(() => [] as Overdue[]),
     db.draft.count({ where: { status: { in: ['pending', 'needs_review'] } } }),
-    db.bankLine.count({ where: { status: { in: ['unmatched', 'suggested'] } } }),
+    db.bankLine.count({ where: { OR: [{ status: 'unmatched' }, { status: 'suggested', draftId: null }] } }),
   ]);
   const deadlines = upcomingDeadlines(tenant.country, settings, day, 14);
   const soon = deadlines.filter((d) => daysBetween(day, d.due) <= 7);

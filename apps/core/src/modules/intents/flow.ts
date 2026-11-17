@@ -15,6 +15,8 @@ import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind, ledg
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 import { buildBriefing } from '../briefing/briefing.js';
+import { answerBankLine, askNextBankLine, importLines, matchLines, tenantToday } from '../banking/service.js';
+import { parseBankSms } from '../banking/parse.js';
 
 /**
  * Deterministic flow engine. State machine per conversation (Redis, 24h):
@@ -67,6 +69,10 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
     return applyEditAndResend(ctx, state.draftId, patch);
   }
 
+  if (state.step === 'awaiting_field' && state.field === 'bankline' && state.partial?.lineId) {
+    return answerBankLine(ctx, String(state.partial.lineId), text, (i) => runIntent(ctx, i));
+  }
+
   if (state.step === 'awaiting_field' && state.pendingIntent && state.field) {
     const partial = { ...(state.partial ?? {}) } as IntentResult['entities'];
     if (state.field === 'kind') {
@@ -86,8 +92,25 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
     return runIntent(ctx, { intent: state.pendingIntent, confidence: 1, entities: partial });
   }
 
+  // A forwarded bank SMS: record it against the books (or ask what it was).
+  const sms = parseBankSms(text, tenantToday(tenant));
+  if (sms) return handleBankSms(ctx, sms);
+
   const intent = await classify(ctx, text);
   await runIntent(ctx, intent);
+}
+
+async function handleBankSms(ctx: BotContext, sms: NonNullable<ReturnType<typeof parseBankSms>>): Promise<void> {
+  const { c, tenant } = ctx;
+  const { added } = await importLines(c, tenant, [sms], 'sms');
+  if (!added.length) return say(ctx, 'I already have this bank transaction. Reply "bank" to see what still needs you.');
+  const m = await matchLines(c, tenant, added, { userId: ctx.user.id, conversationId: ctx.conversationId });
+  if (m.recorded) {
+    const line = await tenantDb(c.prisma, tenant.id).bankLine.findUnique({ where: { id: added[0]!.id } });
+    return say(ctx, `✅ Already in your books${line?.matchName ? ` (${line.matchName})` : ''}. Nothing to do.`);
+  }
+  if (m.toAsk) return askNextBankLine(ctx, added[0]!.id);
+  // a payment draft was sent to confirm
 }
 
 /** Account learned from earlier confirmed entries for this supplier (case-insensitive). */
@@ -312,6 +335,8 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
       return addAccount(ctx, intent);
     case 'briefing':
       return say(ctx, (await buildBriefing(c, tenant)).text);
+    case 'bank':
+      return askNextBankLine(ctx);
     case 'help':
     default: {
       const pending = await tenantDb(c.prisma, tenant.id).draft.count({ where: { status: { in: ['pending', 'needs_review'] } } });

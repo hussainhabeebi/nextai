@@ -36,6 +36,8 @@ export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Langua
   const received = draft.type === 'journal_entry' && p.direction === 'in';
   const extra = [
     p.billNo ? `Bill no: ${p.billNo}` : undefined,
+    p.invoiceRef ? `For invoice: ${p.invoiceRef}` : undefined,
+    p.referenceNo && (draft.type === 'payment_in' || draft.type === 'payment_out') ? `Bank ref: ${p.referenceNo}` : undefined,
     p.lines.length > 1 ? `${p.lines.length} items` : p.lines[0]?.description,
     p.taxes && Object.values(p.taxes).some((v) => (v ?? 0) > 0)
       ? `Tax: ${Object.entries(p.taxes).filter(([, v]) => (v ?? 0) > 0).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(', ')}`
@@ -224,6 +226,7 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
     }
     const current = await erp.get(doctype, erpName);
     if (current.docstatus !== 1) await erp.submit(doctype, erpName);
+    await db.bankLine.updateMany({ where: { draftId }, data: { status: 'matched', matchType: doctype, matchName: erpName } });
 
     if (draft.documentId) {
       const doc = await db.document.findUnique({ where: { id: draft.documentId } });

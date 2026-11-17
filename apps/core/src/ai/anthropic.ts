@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { extractionSchema, intentResultSchema, type Country, type Currency, type Language } from '@nextai/shared';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { AiUsage, LlmProvider, VisionProvider } from './types.js';
+import type { AiUsage, LlmProvider, StatementLine, VisionProvider } from './types.js';
 
 /** Default model; override with AI_ANTHROPIC_MODEL. */
 const MODEL = process.env.AI_ANTHROPIC_MODEL ?? 'claude-opus-5-5';
@@ -60,6 +60,30 @@ const EXTRACTION_PROMPT = (country: Country, currency: Currency) => `You extract
 Rules: dates as YYYY-MM-DD; numbers without separators; null when a field is not visible – never guess tax ids or invoice numbers;
 "confidence" (0-1) reflects legibility and completeness of the whole extraction.`;
 
+const STATEMENT_JSON = {
+  type: 'object',
+  properties: {
+    lines: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: 'YYYY-MM-DD' },
+          description: { type: 'string' },
+          reference: { type: ['string', 'null'] },
+          debit: { type: ['number', 'null'], description: 'money out (withdrawal)' },
+          credit: { type: ['number', 'null'], description: 'money in (deposit)' },
+          balance: { type: ['number', 'null'] },
+        },
+        required: ['date', 'description', 'reference', 'debit', 'credit', 'balance'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['lines'],
+  additionalProperties: false,
+};
+
 export class AnthropicVision implements VisionProvider {
   readonly name = 'anthropic';
   private readonly client: Anthropic;
@@ -91,6 +115,27 @@ export class AnthropicVision implements VisionProvider {
     if (response.stop_reason !== 'end_turn') throw new Error(`Vision extraction failed: ${response.stop_reason}`);
     return { extraction: parseText(response.content, extractionSchema), usage: usageOf(response.usage) };
   }
+
+  async extractStatement(input: { content: Uint8Array; mime: string; currency: Currency }) {
+    const data = Buffer.from(input.content).toString('base64');
+    const media: Anthropic.ContentBlockParam =
+      input.mime === 'application/pdf'
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } }
+        : { type: 'image', source: { type: 'base64', media_type: input.mime as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data } };
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 32000,
+      system: `You read bank statements. Return every transaction row of the statement table, in order, exactly as printed:
+date as YYYY-MM-DD (statements are day-first), the narration as description, the cheque/reference number if any,
+the withdrawal as debit and the deposit as credit (plain numbers in ${input.currency}, no separators; null when empty), and the running balance.
+Skip opening/closing balance rows, totals and page headers. Never invent rows.`,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: STATEMENT_JSON } },
+      messages: [{ role: 'user', content: [media, { type: 'text', text: 'Extract the transactions.' }] }],
+    });
+    if (response.stop_reason !== 'end_turn') throw new Error(`Statement extraction failed: ${response.stop_reason}`);
+    const text = response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+    return { lines: (JSON.parse(text) as { lines: StatementLine[] }).lines, usage: usageOf(response.usage) };
+  }
 }
 
 /** Intent prompt: everyday, informal and mixed-language phrasing, with examples for every intent. */
@@ -112,6 +157,7 @@ Intents (pick exactly one):
 - add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
   "create capital account Hussain", "new loan account SBI Car Loan", "add GST payable ledger", "create fixed asset account Delivery Van",
   "create account Hussain Drawings under Capital Account"
+- bank: they want to go through unmatched bank transactions. "bank", "check bank", "reconcile"
 - briefing: they want today's overview. "briefing", "summary", "how's business today", "good morning", "innathe kanakku"
 - ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
 - request_report: P&L, balance sheet, receivables, payables, ledger, cash flow

@@ -245,6 +245,9 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         reference_no: p.referenceNo ?? (money.kind === 'cash' ? undefined : `NX-${Date.now()}`),
         reference_date: p.date,
         remarks,
+        ...(p.invoiceRef
+          ? { references: [{ reference_doctype: receive ? 'Sales Invoice' : 'Purchase Invoice', reference_name: p.invoiceRef, allocated_amount: p.total }] }
+          : {}),
       };
     }
   }
