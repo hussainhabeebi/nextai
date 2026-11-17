@@ -1,8 +1,8 @@
 import type { PlanCode, PlanLimits } from '@nextai/shared';
 
 /**
- * Plans as published on nextaierp.com (UAE monthly pricing: Base AED 99 / 1 user, Growth AED 299 /
- * 4 users, Pro AED 599 / 10 users). INR prices are placeholders until India pricing is confirmed.
+ * Plans as published on nextaierp.com, per month: Base AED 99 / ₹799 (1 user), Growth AED 299 / ₹1,999
+ * (4 users), Pro AED 599 / ₹4,999 (10 users). INR prices exclude 18% GST. Keep apps/landing/src/config.ts in step.
  *
  * These are the values for a NEW database only: the seed never overwrites an existing plan, so edits made in
  * Admin → Plans survive redeploys. Change live plans in Admin → Plans (or with a data migration).
@@ -12,19 +12,19 @@ export const DEFAULT_PLANS: Array<{ code: PlanCode; name: string; priceMonthly: 
   {
     code: 'base',
     name: 'Base',
-    priceMonthly: { AED: 99, INR: 999 },
+    priceMonthly: { AED: 99, INR: 799 },
     limits: { users: 1, ocrPagesPerMonth: 200, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: [] },
   },
   {
     code: 'growth',
     name: 'Growth',
-    priceMonthly: { AED: 299, INR: 2499 },
+    priceMonthly: { AED: 299, INR: 1999 },
     limits: { users: 4, ocrPagesPerMonth: 1000, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books'] },
   },
   {
     code: 'pro',
     name: 'Pro',
-    priceMonthly: { AED: 599, INR: 5999 },
+    priceMonthly: { AED: 599, INR: 4999 },
     limits: {
       users: 10,
       ocrPagesPerMonth: 5000,
