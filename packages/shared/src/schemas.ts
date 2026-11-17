@@ -146,6 +146,8 @@ export const intentResultSchema = z.object({
       kind: z.string().optional(),
       /** add_account: the ledger name, e.g. "Fuel". (add_party uses `party`.) */
       accountName: z.string().optional(),
+      /** add_account: the group to put the ledger under, when named ("... under Capital Account"). */
+      group: z.string().optional(),
     })
     .default({}),
 });

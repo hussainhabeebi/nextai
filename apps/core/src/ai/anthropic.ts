@@ -105,7 +105,9 @@ Intents (pick exactly one):
 - payment_out: they paid a supplier / named person what they owed. "paid 8000 to AM Motors", "gave 500 to Suresh"
 - add_party: create a customer or supplier (a "party", "account", "contact" or "ledger" for a person or business).
   "Create supplier account AM Motors", "add AM Motors as vendor", "new customer Ravi Traders", "Ravi ne customer aayi add cheyyu"
-- add_account: create a ledger in the chart of accounts. "create expense account Fuel", "open bank account HDFC", "new income ledger Commission"
+- add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
+  "create capital account Hussain", "new loan account SBI Car Loan", "add GST payable ledger", "create fixed asset account Delivery Van",
+  "create account Hussain Drawings under Capital Account"
 - ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
 - request_report: P&L, balance sheet, receivables, payables, ledger, cash flow
 - send_reminder: remind a customer to pay. "remind Ravi", "Ravi ne remind cheyyu"
@@ -113,7 +115,9 @@ Intents (pick exactly one):
 
 Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier name as written;
 description = what the money was for; date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
-kind (add_party / add_account) = customer, supplier, expense, income, bank or cash, left empty if not said; accountName (add_account) = the ledger name;
+kind (add_party / add_account) = one of customer, supplier, expense, direct_expense, income, direct_income, bank, cash, capital, liability, loan,
+tax, asset, fixed_asset, loan_advance, stock, investment (empty if not said); accountName (add_account) = the ledger name;
+group (add_account) = the account group if they name one ("under Capital Account" → Capital Account), else empty;
 question (ask_books) = the question as written. Use an empty string (0 for amount) for entities that do not apply.
 Prefer a concrete intent over help whenever the meaning is reasonably clear; lower the confidence when unsure.`;
 
