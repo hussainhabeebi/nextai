@@ -1,7 +1,7 @@
 import { parseChoice } from '@nextai/chatwoot-client';
 import { QUEUES, formatMoney, t, type Currency, type DraftPayload, type IntentResult } from '@nextai/shared';
 import { ruleClassify } from '../../ai/index.js';
-import { cleanName, normalizeKind } from '../../ai/rules.js';
+import { KIND_CHOICES, cleanName, normalizeKind } from '../../ai/rules.js';
 import { ErpError } from '@nextai/erpnext-client';
 import { audit } from '../audit/audit.js';
 import { tenantDb } from '../../lib/db.js';
@@ -11,7 +11,7 @@ import { say } from '../chatwoot/context.js';
 import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, summaryText, updateDraftPayload } from '../drafts/service.js';
 import { erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
 import { chooseExpenseAccount } from '../erpnext/expense-account.js';
-import { createLedger, createParty, isPartyKind } from '../erpnext/create-account.js';
+import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind } from '../erpnext/create-account.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 
@@ -70,8 +70,10 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
     const partial = { ...(state.partial ?? {}) } as IntentResult['entities'];
     if (state.field === 'kind') {
       const kind = normalizeKind(text);
-      if (!kind) return say(ctx, kindQuestion(String(partial.accountName ?? partial.party ?? 'it')));
-      partial.kind = kind;
+      const group = text.trim().match(/^(?:under|in)\s+(?:the\s+)?(.+?)(?:\s+group)?$/i)?.[1];
+      if (kind && !group) partial.kind = kind;
+      else if (text.trim().length > 1 && !/^\d+$/.test(text.trim())) partial.group = group ?? text.trim(); // a group name
+      else return say(ctx, kindQuestion(String(partial.accountName ?? partial.party ?? 'it')));
     } else if (state.field === 'amount') {
       const n = Number(text.replace(/[^\d.]/g, ''));
       if (!(n > 0)) return say(ctx, t(ctx.lang, 'bot.missingField', { field: 'amount' }));
@@ -142,37 +144,44 @@ async function classify(ctx: BotContext, text: string): Promise<IntentResult> {
 }
 
 const kindQuestion = (name: string) =>
-  `What is ${name}?\n1. Customer\n2. Supplier\n3. Expense account\n4. Income account\n5. Bank account`;
-const KIND_LABEL = { customer: 'Customer', supplier: 'Supplier', expense: 'Expense account', income: 'Income account', bank: 'Bank account', cash: 'Cash account' } as const;
+  `What kind of account is ${name}?\n${KIND_CHOICES.map((k, i) => `${i + 1}. ${KIND_LABEL[k].replace(/ account$/, '')}`).join('\n')}\n\nOr reply with the group to put it under, e.g. "under Capital Account".`;
 
-/** Add a customer/supplier or a ledger in ERPNext (asking for the name or the kind first when missing). */
+/** Add a customer/supplier or a ledger of any kind in ERPNext (asking for the name or the kind first when missing). */
 async function addAccount(ctx: BotContext, intent: IntentResult): Promise<void> {
   const { c, tenant } = ctx;
   const e = intent.entities;
   const name = cleanName(e.accountName || e.party || '');
   const kind = normalizeKind(e.kind);
+  const group = e.group?.trim() || undefined;
   if (!name) return askFor(ctx, intent, 'party', kind ? `${KIND_LABEL[kind].toLowerCase()} name` : 'name');
-  if (!kind) {
+  if (!kind && !group) {
     await c.conversations.set(tenant.id, ctx.conversationId, { step: 'awaiting_field', pendingIntent: intent.intent, field: 'kind', partial: { ...e, party: name } });
     return say(ctx, kindQuestion(name));
   }
-  if (!isPartyKind(kind) && ctx.user.role === 'staff') {
-    return say(ctx, `Only the owner or your accountant can add ledger accounts. Please ask them to send "create ${kind} account ${name}".`);
+  const party = kind && isPartyKind(kind) && !group ? kind : undefined;
+  if (!party && ctx.user.role === 'staff') {
+    return say(ctx, `Only the owner or your accountant can add ledger accounts. Please ask them to send "create ${kind ? KIND_LABEL[kind].toLowerCase() : 'account'} ${name}${group ? ` under ${group}` : ''}".`);
   }
   try {
-    const r = isPartyKind(kind) ? await createParty(c, tenant, kind, name) : await createLedger(c, tenant, kind, name);
-    const label = KIND_LABEL[kind];
+    const r = party
+      ? await createParty(c, tenant, party, name)
+      : await createLedger(c, tenant, { kind: kind && !isPartyKind(kind) ? kind : undefined, group, name });
+    const label = kind && (party || !group) ? KIND_LABEL[kind] : 'Account';
     if (!r.created) {
       return say(ctx, `${name} is already in your books${r.group ? ` (under ${r.group})` : ''}. Nothing new was added.`);
     }
-    await audit(c.prisma, { tenantId: tenant.id, actorId: ctx.user.id, actorType: 'user', channel: 'whatsapp', action: isPartyKind(kind) ? 'party.create' : 'account.create', entity: isPartyKind(kind) ? kind : 'account', entityId: r.name, after: { kind, name: r.name, group: r.group } });
+    await audit(c.prisma, { tenantId: tenant.id, actorId: ctx.user.id, actorType: 'user', channel: 'whatsapp', action: party ? 'party.create' : 'account.create', entity: party ?? 'account', entityId: r.name, after: { kind, name: r.name, group: r.group } });
     const hint =
-      kind === 'customer' ? `\nTry: "sold 5000 to ${name}"`
-      : kind === 'supplier' ? `\nTry: "paid 5000 to ${name}" or send their bill`
-      : kind === 'expense' ? `\nBills can now be booked to it: when editing a bill, reply "account ${name}".`
+      party === 'customer' ? `\nTry: "sold 5000 to ${name}"`
+      : party === 'supplier' ? `\nTry: "paid 5000 to ${name}" or send their bill`
+      : kind === 'expense' || kind === 'direct_expense' ? `\nBills can now be booked to it: when editing a bill, reply "account ${name}".`
       : '';
     return say(ctx, `✅ ${label} "${name}" added to your books${r.group ? ` under ${r.group}` : ''}.${hint}`);
   } catch (err) {
+    if (err instanceof GroupNotFound) {
+      const list = err.groups.slice(0, 30).map((g) => `• ${g}`).join('\n');
+      return say(ctx, `I couldn't find ${err.asked ? `a group called "${err.asked}"` : 'a suitable group'} in your chart of accounts. Send "create account ${name} under <group>" with one of:\n${list}`);
+    }
     logger.warn({ tenantId: tenant.id, kind, err: (err as Error).message }, 'create account failed');
     const why = err instanceof ErpError ? ` ERPNext said: ${err.userMessage}` : '';
     return say(ctx, `Sorry, I couldn't add ${name} right now.${why}`);

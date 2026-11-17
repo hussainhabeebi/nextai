@@ -18,7 +18,17 @@ describe('creating accounts and everyday phrasing', () => {
     expect(r('create expense account Fuel')).toMatchObject({ intent: 'add_account', entities: { kind: 'expense', accountName: 'Fuel' } });
     expect(r('open bank account HDFC Current')).toMatchObject({ intent: 'add_account', entities: { kind: 'bank', accountName: 'HDFC Current' } });
     expect(r('new income ledger Commission')).toMatchObject({ intent: 'add_account', entities: { kind: 'income', accountName: 'Commission' } });
+    expect(r('Create Capital account Hussain')).toMatchObject({ intent: 'add_account', entities: { kind: 'capital', accountName: 'Hussain' } });
+    expect(r('open bank loan account HDFC OD')).toMatchObject({ intent: 'add_account', entities: { kind: 'loan', accountName: 'HDFC OD' } });
+    expect(r('create fixed asset account Delivery Van')).toMatchObject({ intent: 'add_account', entities: { kind: 'fixed_asset' } });
+    expect(r('create loans and advances account Staff Advance')).toMatchObject({ intent: 'add_account', entities: { kind: 'loan_advance' } });
+    expect(r('add GST payable ledger')).toMatchObject({ intent: 'add_account', entities: { kind: 'tax' } });
+    expect(r('create sales account Online Sales')).toMatchObject({ intent: 'add_account', entities: { kind: 'direct_income' } });
+    expect(r('create ledger Office Deposit in current assets group')).toMatchObject({ intent: 'add_account', entities: { group: 'Current Assets', accountName: 'Office Deposit' } });
+    expect(r('create account Hussain Drawings under Capital Account')).toMatchObject({ intent: 'add_account', entities: { group: 'Capital Account', accountName: 'Hussain Drawings' } });
     // money messages are not mistaken for account creation
+    expect(r('add advance 5000 to Ravi')?.intent).not.toBe('add_account');
+    expect(r('add cash 2000')?.intent).not.toBe('add_account');
     expect(r('add expense 500 for tea')?.intent).not.toBe('add_account');
     expect(r('paid 500 to AM Motors')!.intent).toBe('payment_out');
   });

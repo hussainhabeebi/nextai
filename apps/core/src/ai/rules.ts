@@ -26,27 +26,45 @@ export function parseDate(s: string, now = new Date()): string | undefined {
   return iso(date);
 }
 
-const KIND_WORDS: Record<string, AccountKind> = {
-  customer: 'customer', customers: 'customer', client: 'customer', buyer: 'customer', debtor: 'customer',
-  supplier: 'supplier', suppliers: 'supplier', vendor: 'supplier', seller: 'supplier', creditor: 'supplier',
-  expense: 'expense', expenses: 'expense', income: 'income', revenue: 'income', bank: 'bank', cash: 'cash',
-};
+/** Most specific first: "bank loan" is a loan, "loans and advances" an asset, "indirect expenses" not direct. */
+const KIND_PATTERNS: Array<[RegExp, AccountKind]> = [
+  [/\b(customers?|clients?|buyers?|debtors?)\b/, 'customer'],
+  [/\b(suppliers?|vendors?|sellers?|creditors?)\b/, 'supplier'],
+  [/\bloans?\s*(and|&)\s*advances?|\badvances?\b/, 'loan_advance'],
+  [/\b(loans?|borrowings?|overdraft|od)\b/, 'loan'],
+  [/\bfixed\s+assets?\b/, 'fixed_asset'],
+  [/(^|[^n])\bdirect\s+expenses?|\bcost\s+of\s+(goods\s+sold|sales)|\bcogs\b|\bpurchases?\b/, 'direct_expense'],
+  [/\bexpenses?\b|\bexp\b/, 'expense'],
+  [/(^|[^n])\bdirect\s+income|\bsales\b/, 'direct_income'],
+  [/\b(income|revenue)\b/, 'income'],
+  [/\b(tax(es)?|duties|gst|vat|tds|tcs|cgst|sgst|igst)\b/, 'tax'],
+  [/\bbank\b/, 'bank'],
+  [/\bcash\b/, 'cash'],
+  [/\b(capital|equity|drawings?|partners?|proprietors?|owners?|reserves?|surplus)\b/, 'capital'],
+  [/\b(stock|inventory)\b/, 'stock'],
+  [/\binvestments?\b/, 'investment'],
+  [/\b(liabilit(y|ies)|provisions?|payables?)\b/, 'liability'],
+  [/\b(assets?|deposits?|prepaid|receivables?)\b/, 'asset'],
+];
 const PARTY_KINDS = new Set<AccountKind>(['customer', 'supplier']);
 
-/** "Supplier", "vendor", "3", "expense account" → the account kind ("party" and unknown words → undefined). */
+/** The numbered choices offered when the kind is unclear (see kindQuestion in the flow). */
+export const KIND_CHOICES: AccountKind[] = ['customer', 'supplier', 'expense', 'income', 'bank', 'cash', 'capital', 'loan', 'liability', 'asset', 'fixed_asset', 'tax'];
+
+/** "Supplier", "vendor", "7", "partner capital account" → the account kind ("party", "GL" and unknown words → undefined). */
 export function normalizeKind(s: string | undefined): AccountKind | undefined {
   if (!s) return undefined;
-  const v = s.trim().toLowerCase();
-  const byNumber: Record<string, AccountKind> = { '1': 'customer', '2': 'supplier', '3': 'expense', '4': 'income', '5': 'bank' };
-  if (byNumber[v]) return byNumber[v];
-  return v.split(/[^a-z]+/).map((w) => KIND_WORDS[w]).find(Boolean);
+  const v = s.trim().toLowerCase().replace(/_/g, ' ');
+  if (/^\d{1,2}$/.test(v)) return KIND_CHOICES[Number(v) - 1];
+  return KIND_PATTERNS.find(([re]) => re.test(v))?.[1];
 }
 
 const VERB = String.raw`(?:please\s+)?(?:create|add|new|open|make|register|set\s*up|setup|start|insert|enter|save|put)`;
-const KIND = String.raw`(customers?|client|buyer|debtor|suppliers?|vendor|seller|creditor|party|expenses?|income|revenue|bank|cash)`;
-const ACC = String.raw`(?:account|a\/c|acc|ledger|head|master|contact|name)`;
+// Longer phrases first: the first alternative that fits wins ("bank loan" before "bank", "gst payable" before "gst").
+const KIND = String.raw`(customers?|clients?|buyers?|debtors?|suppliers?|vendors?|sellers?|creditors?|party|(?:in)?direct\s+(?:expenses?|income)|cost\s+of\s+(?:goods\s+sold|sales)|loans?\s*(?:and|&)\s*advances?|(?:bank|secured|unsecured|car|vehicle|home|term|business)\s+loans?|loans?|advances?|duties\s*(?:and|&)\s*taxes|(?:gst|vat|tds|tcs|cgst|sgst|igst|output|input)\s+(?:payable|receivable|tax(?:es)?)|(?:gst|vat|tds|tcs|cgst|sgst|igst)|tax(?:es)?|(?:partners?'?s?|owners?'?s?|proprietor'?s?|share)\s+capital|capital|equity|drawings?|reserves?|petty\s+cash|bank|cash|(?:fixed|current)\s+assets?|assets?|current\s+liabilit(?:y|ies)|liabilit(?:y|ies)|provisions?|expenses?|income|revenue|sales|purchases?|cogs|deposits?|prepaid|stock|inventory|investments?)`;
+const ACC = String.raw`(?:(?:(?:gl|general\s+ledger)\s+)?(?:account|a\/c|acc|ledger|head|master|contact|name)|gl|general\s+ledger)`;
 const FILLER = String.raw`(?:(?:a|an|the|new|one|my|our)\s+)*`;
-const LINK = String.raw`(?:\s*(?:named|called|name|for|of|as|:|-|=)\s*|\s+)`;
+const LINK = String.raw`(?:\s*(?:(?:named|called|name|for|of|as)\b|[:=-])\s*|\s+)`;
 
 /** The name as typed, without quotes or a trailing full stop; Title Case only when it was typed all lower case. */
 export function cleanName(s: string): string | undefined {
@@ -61,7 +79,18 @@ export function cleanName(s: string): string | undefined {
  * Ledger kinds (expense/income/bank/cash) need the word account/ledger, so "add expense 500 for tea" stays an expense.
  */
 export function parseCreateAccount(text: string): IntentResult | undefined {
-  const s = text.trim().replace(/\s+/g, ' ');
+  // "... under Capital Account" / "... in Indirect Expenses group": the group is taken as given
+  const full = text.trim().replace(/\s+/g, ' ');
+  const under = full.match(/^(.*?)\s+(?:(?:under|inside|within)\s+(?:the\s+)?(.+?)(?:\s+group)?|in\s+(?:the\s+)?(.+?)\s+group)\.?$/i);
+  const group = under ? cleanName(under[2] ?? under[3]!) : undefined;
+  const r = under && group ? parseCreate(under[1]!) : undefined;
+  // Only a ledger takes a group; for anything else ("add customer Ravi under ...") read the message as written.
+  if (!r || PARTY_KINDS.has(r.entities.kind as AccountKind)) return parseCreate(full);
+  const { party, ...entities } = r.entities;
+  return { intent: 'add_account', confidence: r.confidence, entities: { ...entities, group, accountName: entities.accountName ?? party } };
+}
+
+function parseCreate(s: string): IntentResult | undefined {
   const result = (kindWord: string | undefined, accWord: boolean, rawName: string): IntentResult | undefined => {
     const kind = normalizeKind(kindWord);
     const hasAccWord = accWord || /^party$/i.test(kindWord ?? ''); // "add party Ravi": a party of unknown kind
@@ -81,7 +110,8 @@ export function parseCreateAccount(text: string): IntentResult | undefined {
   if (m && PARTY_KINDS.has(normalizeKind(m[2]) as AccountKind)) return result(m[2], true, m[1]!);
   // create (a new) supplier (account) (named) AM Motors   |   new supplier: AM Motors   |   create account for AM Motors
   m = s.match(new RegExp(String.raw`^${VERB}\s+${FILLER}(?:${KIND}\s*)?(${ACC}s?)?${LINK}(.*)$`, 'i'));
-  if (m && (m[1] || m[2])) return result(m[1], Boolean(m[2]), m[3] ?? '');
+  const named = m && (m[1] || m[2]) ? result(m[1], Boolean(m[2]), m[3] ?? '') : undefined;
+  if (named) return named; // else try the no-name form below ("add GST payable ledger")
   m = s.match(new RegExp(String.raw`^${VERB}\s+${FILLER}(?:${KIND})(?:\s+(${ACC}s?))?\s*$`, 'i')); // "add a supplier" (name asked next)
   if (m) return result(m[1], true, '');
   return undefined;

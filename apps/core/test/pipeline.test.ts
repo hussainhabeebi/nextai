@@ -74,7 +74,7 @@ describe('creating accounts from WhatsApp', () => {
     expect([...docs().get('Supplier')!.values()].filter((s) => String(s.supplier_name).toLowerCase() === 'am motors')).toHaveLength(1);
 
     await say('create account for Kochi Bakers', id);
-    expect(cw().lastText(id)).toMatch(/What is Kochi Bakers\?[\s\S]*1\. Customer[\s\S]*2\. Supplier/);
+    expect(cw().lastText(id)).toMatch(/What kind of account is Kochi Bakers\?[\s\S]*1\. Customer[\s\S]*2\. Supplier/);
     await say('1', id);
     expect(cw().lastText(id)).toMatch(/Customer "Kochi Bakers" added/);
     expect(docs().get('Customer')!.get('Kochi Bakers')).toBeDefined();
@@ -89,6 +89,60 @@ describe('creating accounts from WhatsApp', () => {
     expect(cw().lastText(id)).toMatch(/customer name/);
     await say('shop 24', id);
     expect(cw().lastText(id)).toMatch(/Customer "Shop 24" added/);
+  });
+
+  it('creates every kind of ledger: capital, loans, tax, fixed assets, or under a named group', async () => {
+    const T = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } });
+    const erp = c.erp(T.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    const company = erpContext(T.tenant).company;
+    const accounts = () => [...c.erps.get(T.tenant.id)!.docs.get('Account')!.values()];
+    const group = (name: string, root_type: string, parent: string | null, account_type = '') =>
+      erp.create('Account', { name: `${name} - AIL`, account_name: name, company, is_group: 1, root_type, account_type, parent_account: parent ? `${parent} - AIL` : undefined });
+    // ERPNext's standard chart (India), as groups
+    await group('Source of Funds (Liabilities)', 'Liability', null);
+    await group('Capital Account', 'Liability', 'Source of Funds (Liabilities)');
+    await group('Current Liabilities', 'Liability', 'Source of Funds (Liabilities)');
+    await group('Duties and Taxes', 'Liability', 'Current Liabilities', 'Tax');
+    await group('Loans (Liabilities)', 'Liability', 'Source of Funds (Liabilities)');
+    await group('Application of Funds (Assets)', 'Asset', null);
+    await group('Fixed Assets', 'Asset', 'Application of Funds (Assets)');
+    await group('Current Assets', 'Asset', 'Application of Funds (Assets)');
+    await group('Expenses', 'Expense', null);
+    await group('Direct Expenses', 'Expense', 'Expenses');
+    c.chatwoot(T.tenant);
+    const cw = () => c.cws.get(T.tenant.id)!;
+    const say = (text: string, conversationId: number) => sayAs(text, conversationId, T);
+    const leaf = (name: string) => accounts().find((a) => a.account_name === name);
+
+    const id = ++conv;
+    await say('Create Capital account Hussain', id);
+    expect(cw().lastText(id)).toMatch(/Capital account "Hussain" added to your books under Capital Account/);
+    expect(leaf('Hussain')).toMatchObject({ parent_account: 'Capital Account - AIL', is_group: 0, root_type: 'Liability' });
+    await say('new loan account SBI Car Loan', id);
+    expect(leaf('SBI Car Loan')).toMatchObject({ parent_account: 'Loans (Liabilities) - AIL' });
+    await say('create tax account Output VAT 5%', id);
+    expect(leaf('Output VAT 5%')).toMatchObject({ parent_account: 'Duties and Taxes - AIL', account_type: 'Tax' });
+    await say('create fixed asset account Delivery Van', id);
+    expect(leaf('Delivery Van')).toMatchObject({ parent_account: 'Fixed Assets - AIL', root_type: 'Asset' });
+    await say('add direct expense account Freight Inward', id);
+    expect(leaf('Freight Inward')).toMatchObject({ parent_account: 'Direct Expenses - AIL' });
+
+    await say('create account Hussain Drawings under capital account', id);
+    expect(cw().lastText(id)).toMatch(/"Hussain Drawings" added to your books under Capital Account/);
+    expect(leaf('Hussain Drawings')).toMatchObject({ parent_account: 'Capital Account - AIL' });
+    await say('create account Rent Deposit under Deposits Paid', id);
+    expect(cw().lastText(id)).toMatch(/couldn't find a group called "Deposits Paid"[\s\S]*• Current Assets/);
+
+    // unclear kind: answered with a number, or with a group
+    await say('create GL account Shahala Capital', id);
+    expect(cw().lastText(id)).toMatch(/What kind of account is Shahala Capital\?[\s\S]*7\. Capital[\s\S]*under Capital Account/);
+    await say('7', id);
+    expect(leaf('Shahala Capital')).toMatchObject({ parent_account: 'Capital Account - AIL' });
+    await say('create account Office Deposit', id);
+    await say('under current assets', id);
+    expect(leaf('Office Deposit')).toMatchObject({ parent_account: 'Current Assets - AIL' });
+    await say('create capital account Hussain', id);
+    expect(cw().lastText(id)).toMatch(/already in your books \(under Capital Account\)/);
   });
 });
 

@@ -46,7 +46,11 @@ export const INTENTS = [
 export type Intent = (typeof INTENTS)[number];
 
 /** What "create an account" can mean: a party (customer/supplier) or a ledger in the chart of accounts. */
-export const ACCOUNT_KINDS = ['customer', 'supplier', 'expense', 'income', 'bank', 'cash'] as const;
+export const ACCOUNT_KINDS = [
+  'customer', 'supplier', // parties
+  'expense', 'direct_expense', 'income', 'direct_income', 'bank', 'cash', 'capital', // ledgers in the chart of accounts
+  'liability', 'loan', 'tax', 'asset', 'fixed_asset', 'loan_advance', 'stock', 'investment',
+] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 export const PLAN_CODES = ['base', 'growth', 'pro'] as const;
