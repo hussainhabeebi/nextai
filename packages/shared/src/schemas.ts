@@ -23,6 +23,20 @@ export const reminderScheduleSchema = z.object({
 
 export const tenantSettingsSchema = z.object({
   taxRegime: z.enum(['gst_regular', 'gst_composition', 'vat', 'vat_ct', 'none']).default('gst_regular'),
+  /** Which filings apply, for deadline warnings. */
+  taxCalendar: z
+    .object({
+      gstFiling: z.enum(['monthly', 'quarterly']).default('monthly'), // quarterly = QRMP
+      tds: z.boolean().default(false),
+      advanceTax: z.boolean().default(true),
+      taxAudit: z.boolean().default(false),
+      vatPeriod: z.enum(['quarterly', 'monthly']).default('quarterly'),
+      /** Months in which UAE VAT quarters end (FTA stagger), e.g. [3, 6, 9, 12]. */
+      vatQuarterEnds: z.array(z.number().int().min(1).max(12)).length(4).default([3, 6, 9, 12]),
+      /** Warn this many days before each deadline. */
+      warnDays: z.array(z.number().int().min(0).max(30)).default([7, 2, 0]),
+    })
+    .default({}),
   autoPost: z.boolean().default(false),
   timezone: z.string().default('Asia/Kolkata'),
   reminders: reminderScheduleSchema.default({}),

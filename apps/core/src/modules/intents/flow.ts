@@ -14,6 +14,7 @@ import { chooseExpenseAccount } from '../erpnext/expense-account.js';
 import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind, ledgerTarget } from '../erpnext/create-account.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
+import { buildBriefing } from '../briefing/briefing.js';
 
 /**
  * Deterministic flow engine. State machine per conversation (Redis, 24h):
@@ -309,6 +310,8 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
     case 'add_party':
     case 'add_account':
       return addAccount(ctx, intent);
+    case 'briefing':
+      return say(ctx, (await buildBriefing(c, tenant)).text);
     case 'help':
     default: {
       const pending = await tenantDb(c.prisma, tenant.id).draft.count({ where: { status: { in: ['pending', 'needs_review'] } } });

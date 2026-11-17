@@ -8,7 +8,7 @@ import { processVoice } from '../modules/voice/pipeline.js';
 import { sendInvoice, sendReceipt, sendReminder } from '../modules/outbound/jobs.js';
 import { billingSync } from '../modules/billing/service.js';
 import { sendAdminDailyReport } from '../modules/email/reports.js';
-import { healthErpnext, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
+import { healthErpnext, scheduleDailySummary, scheduleDeadlines, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
 
 const tenantId = z.string().uuid();
 export const jobSchemas = {
@@ -39,6 +39,7 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.outboundReminder]: (d) => sendReminder(c, jobSchemas[QUEUES.outboundReminder].parse(d)),
     [QUEUES.scheduleReminders]: (d) => (fanOut.parse(d), scheduleReminders(c)),
     [QUEUES.scheduleDailySummary]: (d) => (fanOut.parse(d), scheduleDailySummary(c)),
+    [QUEUES.scheduleDeadlines]: (d) => (fanOut.parse(d), scheduleDeadlines(c)),
     [QUEUES.usageRollup]: (d) => (fanOut.parse(d), usageRollup(c)),
     [QUEUES.healthErpnext]: (d) => (fanOut.parse(d), healthErpnext(c)),
     [QUEUES.billingSync]: (d) => (fanOut.parse(d), billingSync(c)),

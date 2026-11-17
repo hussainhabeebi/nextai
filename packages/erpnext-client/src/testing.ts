@@ -42,6 +42,8 @@ export class FakeErpClient implements ErpClient {
         if (op === '=') rows = rows.filter((r) => r[k] === v);
         if (op === '>') rows = rows.filter((r) => Number(r[k]) > Number(v));
         if (op === '<=') rows = rows.filter((r) => String(r[k]) <= String(v));
+        if (op === '<') rows = rows.filter((r) => String(r[k]) < String(v));
+        if (op === '!=') rows = rows.filter((r) => r[k] !== v);
         if (op === '>=') rows = rows.filter((r) => String(r[k]) >= String(v));
         if (op === 'between' && Array.isArray(v)) rows = rows.filter((r) => String(r[k]) >= String(v[0]) && String(r[k]) <= String(v[1]));
         if (op === 'in' && Array.isArray(v)) rows = rows.filter((r) => v.includes(r[k]));

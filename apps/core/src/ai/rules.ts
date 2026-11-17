@@ -156,6 +156,10 @@ export function ruleClassify(text: string): IntentResult | undefined {
 
   if (/^(help|menu|hi|hello|start|\?)$/.test(t)) return { intent: 'help', confidence: 0.95, entities: {} };
 
+  if (/^(daily\s+)?(briefing|brief|summary|update)$|^(today'?s?\s+)?(summary|briefing|update)$|^how'?s\s+(the\s+)?business(\s+today)?\??$|^good\s+morning!?$/.test(t)) {
+    return { intent: 'briefing', confidence: 0.9, entities: {} };
+  }
+
   const create = parseCreateAccount(text);
   if (create) return create;
 

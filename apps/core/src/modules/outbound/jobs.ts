@@ -9,6 +9,7 @@ import { sendWhatsApp } from './whatsapp.js';
 import { planLimits, usageFor } from '../billing/gating.js';
 import { emailDailySummary } from '../email/reports.js';
 import { paymentLinkFor } from '../razorpay/service.js';
+import { buildBriefing } from '../briefing/briefing.js';
 import { localDate } from './time.js';
 
 type SI = { name: string; customer: string; grand_total: number; outstanding_amount: number; due_date: string; currency: string; contact_mobile?: string; docstatus: number };
@@ -208,17 +209,17 @@ export async function summaryFigures(c: Container, tenant: Tenant, at = new Date
   return { day, vars };
 }
 
-/** Evening summary to owners: email (Resend) and WhatsApp (Chatwoot). */
+/** Daily briefing to owners: email (Resend) and WhatsApp (Chatwoot). Approved template outside the 24h window. */
 export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
-  const { day, vars } = await summaryFigures(c, tenant, at);
+  const b = await buildBriefing(c, tenant, at);
   const db = tenantDb(c.prisma, tenant.id);
   // Email (Resend) first so a WhatsApp failure never blocks it, and vice versa.
   try {
-    await emailDailySummary(c, tenant, day, vars);
+    await emailDailySummary(c, tenant, b.day, b.templateVars, { rows: b.rows });
   } catch (err) {
     logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'summary email failed');
   }
-  if (!tenant.cwBotTokenEnc) return vars;
+  if (!tenant.cwBotTokenEnc) return b.templateVars;
   const owners = await db.user.findMany({ where: { role: 'owner', status: 'active', phone: { not: null } } });
   for (const o of owners) {
     await sendWhatsApp(c, tenant, {
@@ -226,10 +227,10 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
       phone: o.phone!,
       name: o.name,
       templateKey: 'daily_summary',
-      params: [vars.sales, vars.expenses, vars.cash, vars.pending],
-      fallbackText: t((o.language ?? tenant.language) as Language, 'bot.dailySummary', vars),
-      ref: `summary-${day}`,
+      params: [b.templateVars.sales, b.templateVars.expenses, b.templateVars.cash, b.templateVars.pending],
+      fallbackText: b.text,
+      ref: `summary-${b.day}`,
     });
   }
-  return vars;
+  return b.templateVars;
 }

@@ -41,6 +41,8 @@ export default function SettingsPage() {
           bank: form.settings.bank,
           reminders: form.settings.reminders,
           dailySummary: form.settings.dailySummary,
+          taxRegime: form.settings.taxRegime,
+          taxCalendar: form.settings.taxCalendar,
         },
       });
       setLang(form.language);
@@ -91,7 +93,63 @@ export default function SettingsPage() {
           <Toggle label="Post confirmed-quality bills automatically (skip approval)" checked={s.autoPost} onChange={(v) => set({ autoPost: v })} />
           <Toggle label="Send invoices to customers on WhatsApp" checked={s.autoSendInvoices} onChange={(v) => set({ autoSendInvoices: v })} />
           <Toggle label="Payment reminders" checked={s.reminders.enabled} onChange={(v) => set({ reminders: { ...s.reminders, enabled: v } })} />
-          <Toggle label="Evening summary on WhatsApp" checked={s.dailySummary.enabled} onChange={(v) => set({ dailySummary: { ...s.dailySummary, enabled: v } })} />
+          <Toggle label="Daily briefing on WhatsApp" checked={s.dailySummary.enabled} onChange={(v) => set({ dailySummary: { ...s.dailySummary, enabled: v } })} />
+          <Field label="Briefing time">
+            <Select value={s.dailySummary.hourLocal} onChange={(e) => set({ dailySummary: { ...s.dailySummary, hourLocal: Number(e.target.value) } })}>
+              {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>)}
+            </Select>
+          </Field>
+        </Card>
+        <Card className="space-y-3">
+          <h2 className="font-semibold">Tax deadlines</h2>
+          <p className="text-sm text-muted">We warn you and your accountant 7 and 2 days before each filing, with what's still missing.</p>
+          {form.country === 'IN' ? (
+            <>
+              <Field label="GST registration">
+                <Select value={s.taxRegime} onChange={(e) => set({ taxRegime: e.target.value as TenantSettings['taxRegime'] })}>
+                  <option value="gst_regular">Regular</option>
+                  <option value="gst_composition">Composition</option>
+                  <option value="none">Not registered</option>
+                </Select>
+              </Field>
+              {s.taxRegime === 'gst_regular' && (
+                <Field label="GST returns">
+                  <Select value={s.taxCalendar.gstFiling} onChange={(e) => set({ taxCalendar: { ...s.taxCalendar, gstFiling: e.target.value as 'monthly' | 'quarterly' } })}>
+                    <option value="monthly">Monthly (GSTR-1 by 11th, GSTR-3B by 20th)</option>
+                    <option value="quarterly">Quarterly (QRMP)</option>
+                  </Select>
+                </Field>
+              )}
+              <Toggle label="We deduct TDS" checked={s.taxCalendar.tds} onChange={(v) => set({ taxCalendar: { ...s.taxCalendar, tds: v } })} />
+              <Toggle label="Advance tax instalments" checked={s.taxCalendar.advanceTax} onChange={(v) => set({ taxCalendar: { ...s.taxCalendar, advanceTax: v } })} />
+              <Toggle label="Accounts are audited (ITR due 31 Oct)" checked={s.taxCalendar.taxAudit} onChange={(v) => set({ taxCalendar: { ...s.taxCalendar, taxAudit: v } })} />
+            </>
+          ) : (
+            <>
+              <Field label="Tax registration">
+                <Select value={s.taxRegime} onChange={(e) => set({ taxRegime: e.target.value as TenantSettings['taxRegime'] })}>
+                  <option value="vat_ct">VAT and Corporate Tax</option>
+                  <option value="vat">VAT only</option>
+                  <option value="none">Not registered</option>
+                </Select>
+              </Field>
+              <Field label="VAT return period">
+                <Select value={s.taxCalendar.vatPeriod} onChange={(e) => set({ taxCalendar: { ...s.taxCalendar, vatPeriod: e.target.value as 'monthly' | 'quarterly' } })}>
+                  <option value="quarterly">Quarterly</option>
+                  <option value="monthly">Monthly</option>
+                </Select>
+              </Field>
+              {s.taxCalendar.vatPeriod === 'quarterly' && (
+                <Field label="Your VAT quarters end in" hint="As shown on your FTA certificate">
+                  <Select value={s.taxCalendar.vatQuarterEnds[0]} onChange={(e) => { const f = Number(e.target.value); set({ taxCalendar: { ...s.taxCalendar, vatQuarterEnds: [f, f + 3, f + 6, f + 9] } }); }}>
+                    <option value={1}>Jan, Apr, Jul, Oct</option>
+                    <option value={2}>Feb, May, Aug, Nov</option>
+                    <option value={3}>Mar, Jun, Sep, Dec</option>
+                  </Select>
+                </Field>
+              )}
+            </>
+          )}
         </Card>
         {isOwner && <Button size="lg" onClick={() => void save()}>Save settings</Button>}
       </fieldset>

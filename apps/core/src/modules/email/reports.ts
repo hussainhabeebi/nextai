@@ -39,7 +39,7 @@ export async function emailDailySummary(
   tenant: Tenant,
   day: string,
   vars: SummaryFigures,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; rows?: Array<{ label: string; value: string }> } = {},
 ): Promise<{ sent: number } | { skipped: string }> {
   if (!c.mailer.configured) return { skipped: 'mail_not_configured' };
   const to = await reportRecipients(c, tenant);
@@ -54,7 +54,7 @@ export async function emailDailySummary(
   const { html, text } = reportEmail({
     title: `${tenant.name} — daily summary`,
     intro: `Here is how ${day} went. Figures come from entries recorded by NextAi and your live bank/cash balances.`,
-    rows: [
+    rows: opts.rows ?? [
       { label: 'Sales today', value: vars.sales },
       { label: 'Expenses today', value: vars.expenses },
       { label: 'Cash & bank', value: vars.cash },

@@ -112,6 +112,7 @@ Intents (pick exactly one):
 - add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
   "create capital account Hussain", "new loan account SBI Car Loan", "add GST payable ledger", "create fixed asset account Delivery Van",
   "create account Hussain Drawings under Capital Account"
+- briefing: they want today's overview. "briefing", "summary", "how's business today", "good morning", "innathe kanakku"
 - ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
 - request_report: P&L, balance sheet, receivables, payables, ledger, cash flow
 - send_reminder: remind a customer to pay. "remind Ravi", "Ravi ne remind cheyyu"
