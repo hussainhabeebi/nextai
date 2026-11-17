@@ -43,4 +43,9 @@ export const DEFAULT_TEMPLATES = [
   { key: 'daily_summary', name: 'nextai_daily_summary', language: 'en', params: ['sales', 'expenses', 'cash', 'pending'], category: 'UTILITY' },
   { key: 'billing_notice', name: 'nextai_billing_notice', language: 'en', params: ['business', 'link'], category: 'UTILITY' },
   { key: 'draft_review', name: 'nextai_draft_ready', language: 'en', params: ['summary'], category: 'UTILITY' },
+  // New templates: create them in Meta with these names and parameters, then mark them approved in Admin → Templates.
+  // Until then messages use the approved template above (and include the link whenever plain text is allowed).
+  { key: 'invoice_pay', name: 'nextai_invoice_pay', language: 'en', params: ['party', 'business', 'invoice_no', 'amount', 'due_date', 'pay_link'], category: 'UTILITY', approved: false },
+  { key: 'reminder_pay', name: 'nextai_payment_reminder_pay', language: 'en', params: ['party', 'business', 'amount', 'invoice_no', 'due_date', 'pay_link'], category: 'UTILITY', approved: false },
+  { key: 'tax_deadline', name: 'nextai_tax_deadline', language: 'en', params: ['business', 'what', 'due_date', 'days_left'], category: 'UTILITY', approved: false },
 ];

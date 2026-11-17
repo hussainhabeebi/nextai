@@ -124,6 +124,7 @@ function parseCreate(s: string): IntentResult | undefined {
  */
 export function ruleClassify(text: string): IntentResult | undefined {
   const raw = text.trim().toLowerCase();
+  const titleCase = (part: string) => asTyped(text, part); // names keep the casing they were typed with ("SBI", "AM Motors")
   // "by bank" / "via upi" / "using card" → payment mode; removed so it doesn't end up in party names.
   const modeMatch = raw.match(MODE_RE);
   const paymentMode = modeMatch ? MODES[modeMatch[1]!.replace(/\s+/g, ' ')] : undefined;
@@ -155,6 +156,12 @@ export function ruleClassify(text: string): IntentResult | undefined {
 
   if (/^(help|menu|hi|hello|start|\?)$/.test(t)) return { intent: 'help', confidence: 0.95, entities: {} };
 
+  if (/^(daily\s+)?(briefing|brief|summary|update)$|^(today'?s?\s+)?(summary|briefing|update)$|^how'?s\s+(the\s+)?business(\s+today)?\??$|^good\s+morning!?$/.test(t)) {
+    return { intent: 'briefing', confidence: 0.9, entities: {} };
+  }
+
+  if (/^(bank|bank lines?|check bank|bank check|reconcile|bank reconciliation|match bank)$/.test(t)) return { intent: 'bank', confidence: 0.9, entities: {} };
+
   const create = parseCreateAccount(text);
   if (create) return create;
 
@@ -176,6 +183,12 @@ export function ruleClassify(text: string): IntentResult | undefined {
   const recv = t.match(/^(?:i |we )?(?:received|recd|got|collected)\b.*?\bfrom\s+([a-z][\w .&-]{1,40})$/);
   if (recv && amount) {
     return { intent: 'payment_in', confidence: 0.85, entities: { amount, currency, paymentMode, date, party: titleCase(recv[1]!) } };
+  }
+
+  // "Hussain introduced capital 50000" / "director brought in 1 lakh" / "owner invested 20000" → money in (capital)
+  const intro = t.match(/^([a-z][\w .&'-]{1,40}?)\s+(?:introduced|invested|brought(?:\s+in)?|contributed|put\s+in|added)\b/);
+  if (intro && amount && !/^(i|we)\b/.test(intro[1]!)) {
+    return { intent: 'payment_in', confidence: 0.85, entities: { amount, currency, paymentMode, date, party: titleCase(intro[1]!), description: 'capital' } };
   }
 
   const pin = t.match(/^([a-z][\w .&-]{1,40}?)\s+(?:paid|sent|transferred|gave)\s+(?:me\s+|us\s+)?/);
@@ -205,3 +218,12 @@ export function ruleClassify(text: string): IntentResult | undefined {
 }
 
 const titleCase = (s: string): string => s.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** `part` (found in the lower-cased message) as it was typed; Title Case when it was typed all lower case. */
+function asTyped(original: string, part: string): string {
+  const p = part.trim();
+  const flat = original.replace(/\s+/g, ' ');
+  const i = flat.toLowerCase().indexOf(p.toLowerCase());
+  const typed = i >= 0 ? flat.slice(i, i + p.length) : p;
+  return typed === typed.toLowerCase() ? titleCase(typed) : typed;
+}

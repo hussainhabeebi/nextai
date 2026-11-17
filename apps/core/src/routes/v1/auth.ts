@@ -24,7 +24,7 @@ const tokenResponse = z.object({
   memberships: membershipsSchema,
 });
 
-async function membershipsForPhone(c: Container, phone: string) {
+export async function membershipsForPhone(c: Container, phone: string) {
   return withSystemTx(c.prisma, (tx) =>
     tx.user.findMany({
       where: { phone, status: { not: 'disabled' }, tenantId: { not: null }, tenant: { status: { not: 'suspended' } } },

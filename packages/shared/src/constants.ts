@@ -41,6 +41,8 @@ export const INTENTS = [
   'send_reminder',
   'add_party',
   'add_account',
+  'briefing',
+  'bank',
   'help',
 ] as const;
 export type Intent = (typeof INTENTS)[number];
@@ -78,6 +80,8 @@ export const QUEUES = {
   outboundReminder: 'outbound.reminder',
   scheduleReminders: 'schedule.reminders',
   scheduleDailySummary: 'schedule.daily_summary',
+  scheduleDeadlines: 'schedule.deadlines',
+  bankStatement: 'bank.statement',
   usageRollup: 'usage.rollup',
   billingSync: 'billing.sync',
   healthErpnext: 'health.erpnext',

@@ -14,6 +14,8 @@ import { Prisma, PrismaClient } from '@prisma/client';
  */
 
 export const TENANT_MODELS = new Set<string>([
+  'PaymentLink',
+  'BankLine',
   'User',
   'Session',
   'Document',

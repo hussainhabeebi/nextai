@@ -5,6 +5,7 @@ import { withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { erpContext } from '../erpnext/mappers.js';
 import { localHour, scanReminders, sendDailySummary } from '../outbound/jobs.js';
+import { sendDeadlineWarnings } from '../briefing/briefing.js';
 import { currentPeriod } from '../usage/usage.js';
 
 /** Cross-tenant fan-out uses the system context (audited by design: read-only selection of tenants). */
@@ -45,6 +46,14 @@ export function scheduleDailySummary(c: Container, at = new Date()) {
   });
 }
 
+/** schedule.deadlines — runs hourly; tax deadline warnings at each tenant's briefing hour. */
+export function scheduleDeadlines(c: Container, at = new Date()) {
+  return forEachTenant(c, async (t) => {
+    const { settings } = erpContext(t);
+    if (t.cwBotTokenEnc && localHour(settings.timezone, at) === settings.dailySummary.hourLocal) await sendDeadlineWarnings(c, t, at);
+  });
+}
+
 /** usage.rollup — hourly snapshot of per-tenant usage into Redis for the admin dashboard. */
 export async function usageRollup(c: Container) {
   const period = currentPeriod();
@@ -79,6 +88,7 @@ export async function healthErpnext(c: Container) {
 export const SCHEDULE_QUEUES = {
   [QUEUES.scheduleReminders]: '5 * * * *',
   [QUEUES.scheduleDailySummary]: '0 * * * *',
+  [QUEUES.scheduleDeadlines]: '2 * * * *',
   [QUEUES.usageRollup]: '15 * * * *',
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',

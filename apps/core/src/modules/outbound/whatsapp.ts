@@ -10,6 +10,8 @@ export interface OutboundOptions {
   name: string;
   templateKey: string;
   params: string[];
+  /** Template to use when `templateKey` has no approved template yet (e.g. the payment-link variant). */
+  alt?: { templateKey: string; params: string[] };
   fallbackText: string;
   file?: { filename: string; content: Uint8Array; mime: string };
   ref?: string;
@@ -23,9 +25,15 @@ export interface OutboundOptions {
 export async function sendWhatsApp(c: Container, tenant: Tenant, o: OutboundOptions): Promise<{ conversationId: number }> {
   const cw = c.chatwoot(tenant);
   const lang = (tenant.language as Language) ?? 'en';
-  const tpl =
-    (await c.prisma.messageTemplate.findUnique({ where: { key_language: { key: o.templateKey, language: lang } } })) ??
-    (await c.prisma.messageTemplate.findUnique({ where: { key_language: { key: o.templateKey, language: 'en' } } }));
+  const approved = async (key: string) =>
+    (await c.prisma.messageTemplate.findFirst({ where: { key, language: lang, approved: true } })) ??
+    (await c.prisma.messageTemplate.findFirst({ where: { key, language: 'en', approved: true } }));
+  let tpl = await approved(o.templateKey);
+  let params = o.params;
+  if (!tpl && o.alt) {
+    tpl = await approved(o.alt.templateKey);
+    params = o.alt.params;
+  }
   const db = tenantDb(c.prisma, tenant.id);
   const log = await db.outboundMessage.create({
     data: { tenantId: tenant.id, kind: o.kind, toPhone: o.phone, ref: o.ref, status: 'sending' },
@@ -43,7 +51,7 @@ export async function sendWhatsApp(c: Container, tenant: Tenant, o: OutboundOpti
     }
     // Inside the 24h window plain text always delivers; templates only once approved in Meta.
     if (tpl && !(await inCustomerWindow(c.redis, tenant.id, o.phone))) {
-      await cw.sendTemplate(conversationId, o.fallbackText, { name: tpl.name, language: tpl.language, category: tpl.category, params: o.params });
+      await cw.sendTemplate(conversationId, o.fallbackText, { name: tpl.name, language: tpl.language, category: tpl.category, params });
     } else {
       await cw.sendText(conversationId, o.fallbackText);
     }

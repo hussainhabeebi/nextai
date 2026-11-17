@@ -16,6 +16,7 @@ import { createRedis } from './state/redis.js';
 import { LocalFsStorage, R2Storage } from './storage/storage.js';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { FakeRazorpayClient, razorpayClientFor } from './modules/razorpay/client.js';
 
 /** Build the production container from env. */
 export function createContainer(): Container & { close: () => Promise<void> } {
@@ -30,6 +31,7 @@ export function createContainer(): Container & { close: () => Promise<void> } {
   // MOCK_EXTERNALS=true lets the whole stack run locally without ERPNext/Chatwoot.
   const fakeErp = new Map<string, FakeErpClient>();
   const fakeCw = new Map<string, FakeChatwootClient>();
+  const fakeRzp = new Map<string, FakeRazorpayClient>();
   return {
     prisma,
     redis,
@@ -41,6 +43,9 @@ export function createContainer(): Container & { close: () => Promise<void> } {
     chatwoot: e.MOCK_EXTERNALS ? (t) => fakeCw.get(t.id) ?? fakeCw.set(t.id, new FakeChatwootClient()).get(t.id)! : chatwootClientFor,
     payments:
       e.STRIPE_SECRET_KEY && e.STRIPE_WEBHOOK_SECRET ? new StripeProvider(e.STRIPE_SECRET_KEY, e.STRIPE_WEBHOOK_SECRET) : new FakePaymentProvider(),
+    razorpay: e.MOCK_EXTERNALS
+      ? (t) => (t.rzpKeyId ? (fakeRzp.get(t.id) ?? fakeRzp.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined)
+      : razorpayClientFor,
     provisioner: e.PROVISIONER_URL && e.PROVISIONER_SECRET ? new HttpProvisionerClient(e.PROVISIONER_URL, e.PROVISIONER_SECRET) : new FakeProvisionerClient(),
     mailer: e.RESEND_API_KEY ? new ResendMailer(e.RESEND_API_KEY, e.MAIL_FROM) : new MemoryMailer(e.MAIL_FROM, false),
     close: async () => {

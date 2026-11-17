@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { extractionSchema, intentResultSchema, type Country, type Currency, type Language } from '@nextai/shared';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { AiUsage, LlmProvider, VisionProvider } from './types.js';
+import type { AiUsage, LlmProvider, StatementLine, VisionProvider } from './types.js';
 
 /** Default model; override with AI_ANTHROPIC_MODEL. */
 const MODEL = process.env.AI_ANTHROPIC_MODEL ?? 'claude-opus-5-5';
@@ -60,6 +60,30 @@ const EXTRACTION_PROMPT = (country: Country, currency: Currency) => `You extract
 Rules: dates as YYYY-MM-DD; numbers without separators; null when a field is not visible – never guess tax ids or invoice numbers;
 "confidence" (0-1) reflects legibility and completeness of the whole extraction.`;
 
+const STATEMENT_JSON = {
+  type: 'object',
+  properties: {
+    lines: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: 'YYYY-MM-DD' },
+          description: { type: 'string' },
+          reference: { type: ['string', 'null'] },
+          debit: { type: ['number', 'null'], description: 'money out (withdrawal)' },
+          credit: { type: ['number', 'null'], description: 'money in (deposit)' },
+          balance: { type: ['number', 'null'] },
+        },
+        required: ['date', 'description', 'reference', 'debit', 'credit', 'balance'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['lines'],
+  additionalProperties: false,
+};
+
 export class AnthropicVision implements VisionProvider {
   readonly name = 'anthropic';
   private readonly client: Anthropic;
@@ -91,6 +115,27 @@ export class AnthropicVision implements VisionProvider {
     if (response.stop_reason !== 'end_turn') throw new Error(`Vision extraction failed: ${response.stop_reason}`);
     return { extraction: parseText(response.content, extractionSchema), usage: usageOf(response.usage) };
   }
+
+  async extractStatement(input: { content: Uint8Array; mime: string; currency: Currency }) {
+    const data = Buffer.from(input.content).toString('base64');
+    const media: Anthropic.ContentBlockParam =
+      input.mime === 'application/pdf'
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } }
+        : { type: 'image', source: { type: 'base64', media_type: input.mime as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data } };
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 32000,
+      system: `You read bank statements. Return every transaction row of the statement table, in order, exactly as printed:
+date as YYYY-MM-DD (statements are day-first), the narration as description, the cheque/reference number if any,
+the withdrawal as debit and the deposit as credit (plain numbers in ${input.currency}, no separators; null when empty), and the running balance.
+Skip opening/closing balance rows, totals and page headers. Never invent rows.`,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: STATEMENT_JSON } },
+      messages: [{ role: 'user', content: [media, { type: 'text', text: 'Extract the transactions.' }] }],
+    });
+    if (response.stop_reason !== 'end_turn') throw new Error(`Statement extraction failed: ${response.stop_reason}`);
+    const text = response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+    return { lines: (JSON.parse(text) as { lines: StatementLine[] }).lines, usage: usageOf(response.usage) };
+  }
 }
 
 /** Intent prompt: everyday, informal and mixed-language phrasing, with examples for every intent. */
@@ -101,20 +146,26 @@ and English mixed with Malayalam (Manglish, e.g. "kaasu kitti", "koduthu", "vang
 Intents (pick exactly one):
 - record_expense: they spent money on something. "petrol 500", "tea 50 cash", "paid electricity bill 3200", "rent koduthu 15000"
 - record_sale: they sold or billed a customer. "sold 5000 to Ravi", "Ravi ku 2000 nte sale", "bill 3500 for Anil"
-- payment_in: a customer paid them. "Ravi paid 2000", "got 5k from Shop 24", "received 1500 from Anil by upi", "Anil kaasu thannu 1000"
-- payment_out: they paid a supplier / named person what they owed. "paid 8000 to AM Motors", "gave 500 to Suresh"
+- payment_in: money came in from someone: a customer paying, or the owner/director/partner putting in capital, or a loan received.
+  "Ravi paid 2000", "got 5k from Shop 24", "received 1500 from Anil by upi", "Anil kaasu thannu 1000",
+  "received 50000 cash from Hussain capital account" (party "Hussain capital account", description "capital"),
+  "director Hussain brought in 1 lakh" (description "capital"), "loan 2 lakh received from SBI" (party "SBI", description "loan")
+- payment_out: money went out to someone: a supplier, a named person, the owner's drawings or a loan repayment.
+  "paid 8000 to AM Motors", "gave 500 to Suresh", "Hussain took 10000 for personal use" (description "drawings"), "repaid 20000 SBI loan" (description "loan")
 - add_party: create a customer or supplier (a "party", "account", "contact" or "ledger" for a person or business).
   "Create supplier account AM Motors", "add AM Motors as vendor", "new customer Ravi Traders", "Ravi ne customer aayi add cheyyu"
 - add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
   "create capital account Hussain", "new loan account SBI Car Loan", "add GST payable ledger", "create fixed asset account Delivery Van",
   "create account Hussain Drawings under Capital Account"
+- bank: they want to go through unmatched bank transactions. "bank", "check bank", "reconcile"
+- briefing: they want today's overview. "briefing", "summary", "how's business today", "good morning", "innathe kanakku"
 - ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
 - request_report: P&L, balance sheet, receivables, payables, ledger, cash flow
 - send_reminder: remind a customer to pay. "remind Ravi", "Ravi ne remind cheyyu"
 - help: greetings or when nothing above fits.
 
 Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier name as written;
-description = what the money was for; date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
+description = what the money was for (say "capital", "drawings" or "loan" when it is one of those); date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
 kind (add_party / add_account) = one of customer, supplier, expense, direct_expense, income, direct_income, bank, cash, capital, liability, loan,
 tax, asset, fixed_asset, loan_advance, stock, investment (empty if not said); accountName (add_account) = the ledger name;
 group (add_account) = the account group if they name one ("under Capital Account" → Capital Account), else empty;

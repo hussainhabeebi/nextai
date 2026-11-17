@@ -1,6 +1,6 @@
 import { extractionSchema, type Extraction } from '@nextai/shared';
 import { ruleClassify } from './rules.js';
-import type { LlmProvider, SttProvider, VisionProvider } from './types.js';
+import type { LlmProvider, StatementLine, SttProvider, VisionProvider } from './types.js';
 
 const zero = { tokens: 0, costMicros: 0 };
 
@@ -10,6 +10,7 @@ const zero = { tokens: 0, costMicros: 0 };
  */
 export class MockVision implements VisionProvider {
   readonly name = 'mock';
+  declare extractStatement: VisionProvider['extractStatement'];
   async extract(input: { content: Uint8Array; currency: Extraction['currency'] }) {
     try {
       const parsed = extractionSchema.parse(JSON.parse(new TextDecoder().decode(input.content)));
@@ -33,6 +34,17 @@ export class MockVision implements VisionProvider {
     }
   }
 }
+
+/** Mock statement reader: the file bytes are JSON {"lines": StatementLine[]} (tests/fixtures). */
+export async function mockExtractStatement(input: { content: Uint8Array }) {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(input.content)) as { lines?: StatementLine[] };
+    return { lines: parsed.lines ?? [], usage: zero };
+  } catch {
+    return { lines: [] as StatementLine[], usage: zero };
+  }
+}
+MockVision.prototype.extractStatement = mockExtractStatement;
 
 /** Mock STT: audio bytes are treated as UTF-8 text. */
 export class MockStt implements SttProvider {

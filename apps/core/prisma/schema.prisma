@@ -93,6 +93,7 @@ enum WebhookSource {
   chatwoot
   erpnext
   stripe
+  razorpay
 }
 
 enum SessionKind {
@@ -101,36 +102,44 @@ enum SessionKind {
 }
 
 model Tenant {
-  id              String       @id @default(uuid()) @db.Uuid
-  name            String
-  slug            String       @unique
-  country         Country
-  currency        String       @db.VarChar(3)
-  language        String       @default("en") @db.VarChar(5)
-  status          TenantStatus @default(trial)
-  erpSiteUrl      String?      @map("erp_site_url")
-  erpApiKeyEnc    String?      @map("erp_api_key_enc")
-  erpApiSecretEnc String?      @map("erp_api_secret_enc")
-  erpWebhookSecretEnc String?  @map("erp_webhook_secret_enc")
-  cwAccountId     Int?         @map("cw_account_id")
-  cwInboxId       Int?         @unique @map("cw_inbox_id")
-  cwBotTokenEnc   String?      @map("cw_bot_token_enc")
-  planId          String?      @map("plan_id") @db.Uuid
-  settings        Json         @default("{}")
-  trialEndsAt     DateTime?    @map("trial_ends_at")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  id                  String       @id @default(uuid()) @db.Uuid
+  name                String
+  slug                String       @unique
+  country             Country
+  currency            String       @db.VarChar(3)
+  language            String       @default("en") @db.VarChar(5)
+  status              TenantStatus @default(trial)
+  erpSiteUrl          String?      @map("erp_site_url")
+  erpApiKeyEnc        String?      @map("erp_api_key_enc")
+  erpApiSecretEnc     String?      @map("erp_api_secret_enc")
+  erpWebhookSecretEnc String?      @map("erp_webhook_secret_enc")
+  cwAccountId         Int?         @map("cw_account_id")
+  cwInboxId           Int?         @unique @map("cw_inbox_id")
+  cwBotTokenEnc       String?      @map("cw_bot_token_enc")
+  /**
+   * The business's own Razorpay account (payment links on its invoices). Key id is public; secrets sealed.
+   */
+  rzpKeyId            String?      @map("rzp_key_id")
+  rzpKeySecretEnc     String?      @map("rzp_key_secret_enc")
+  rzpWebhookSecretEnc String?      @map("rzp_webhook_secret_enc")
+  planId              String?      @map("plan_id") @db.Uuid
+  settings            Json         @default("{}")
+  trialEndsAt         DateTime?    @map("trial_ends_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
 
-  plan            Plan?            @relation(fields: [planId], references: [id])
-  users           User[]
-  documents       Document[]
-  drafts          Draft[]
-  vendorMappings  VendorMapping[]
-  subscriptions   Subscription[]
-  usageCounters   UsageCounter[]
-  auditLogs       AuditLog[]
-  pushSubs        PushSubscription[]
-  outbound        OutboundMessage[]
+  plan           Plan?              @relation(fields: [planId], references: [id])
+  users          User[]
+  documents      Document[]
+  drafts         Draft[]
+  vendorMappings VendorMapping[]
+  subscriptions  Subscription[]
+  usageCounters  UsageCounter[]
+  auditLogs      AuditLog[]
+  pushSubs       PushSubscription[]
+  outbound       OutboundMessage[]
+  paymentLinks   PaymentLink[]
+  bankLines      BankLine[]
 
   @@map("tenants")
 }
@@ -151,10 +160,10 @@ model User {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  tenant        Tenant?       @relation(fields: [tenantId], references: [id])
-  drafts        Draft[]
-  sessions      Session[]
-  webauthn      WebAuthnCredential[]
+  tenant   Tenant?              @relation(fields: [tenantId], references: [id])
+  drafts   Draft[]
+  sessions Session[]
+  webauthn WebAuthnCredential[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -175,7 +184,7 @@ model Session {
   revokedAt   DateTime?   @map("revoked_at")
   createdAt   DateTime    @default(now()) @map("created_at")
 
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("sessions")
@@ -190,7 +199,7 @@ model WebAuthnCredential {
   transports   String[]
   createdAt    DateTime @default(now()) @map("created_at")
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("webauthn_credentials")
 }
@@ -208,8 +217,8 @@ model Document {
   uploadedBy String?        @map("uploaded_by") @db.Uuid
   createdAt  DateTime       @default(now()) @map("created_at")
 
-  tenant     Tenant         @relation(fields: [tenantId], references: [id])
-  drafts     Draft[]
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
+  drafts Draft[]
 
   @@unique([tenantId, sha256])
   @@index([tenantId])
@@ -233,9 +242,9 @@ model Draft {
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
 
-  tenant         Tenant      @relation(fields: [tenantId], references: [id])
-  user           User?       @relation(fields: [userId], references: [id])
-  document       Document?   @relation(fields: [documentId], references: [id])
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+  document Document? @relation(fields: [documentId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -253,7 +262,7 @@ model VendorMapping {
   hits           Int      @default(0)
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([tenantId, supplierName])
   @@index([tenantId])
@@ -270,7 +279,7 @@ model Plan {
   providerPriceIds Json     @default("{}") @map("provider_price_ids") // { "stripe": { "INR": "price_..", "AED": "price_.." } }
   active           Boolean  @default(true)
 
-  tenants          Tenant[]
+  tenants Tenant[]
 
   @@map("plans")
 }
@@ -288,7 +297,7 @@ model Subscription {
   createdAt              DateTime            @default(now()) @map("created_at")
   updatedAt              DateTime            @updatedAt @map("updated_at")
 
-  tenant                 Tenant              @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@index([providerCustomerId])
@@ -305,7 +314,7 @@ model UsageCounter {
   aiCostMicros BigInt @default(0) @map("ai_cost_micros")
   invoicesSent Int    @default(0) @map("invoices_sent")
 
-  tenant       Tenant @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([tenantId, period])
   @@index([tenantId])
@@ -326,7 +335,7 @@ model AuditLog {
   ip        String?
   createdAt DateTime  @default(now()) @map("created_at")
 
-  tenant    Tenant?   @relation(fields: [tenantId], references: [id])
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, createdAt])
   @@index([action])
@@ -358,7 +367,7 @@ model OutboundMessage {
   error          String?
   createdAt      DateTime @default(now()) @map("created_at")
 
-  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, createdAt])
   @@map("outbound_messages")
@@ -372,7 +381,7 @@ model PushSubscription {
   keys      Json
   createdAt DateTime @default(now()) @map("created_at")
 
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@map("push_subscriptions")
@@ -396,8 +405,65 @@ model MessageTemplate {
   language  String   @db.VarChar(5)
   params    String[] // ordered param names
   category  String   @default("UTILITY")
+  /**
+   * Approved in Meta. Unapproved templates are never sent; the message falls back to an approved one.
+   */
+  approved  Boolean  @default(true)
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([key, language])
   @@map("message_templates")
+}
+
+/**
+ * A Razorpay payment link for a sales invoice (one active link per invoice and amount).
+ */
+model PaymentLink {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  invoiceName     String    @map("invoice_name")
+  customer        String
+  amount          Decimal   @db.Decimal(14, 2)
+  currency        String    @db.VarChar(3)
+  provider        String    @default("razorpay")
+  providerId      String    @unique @map("provider_id")
+  url             String
+  status          String    @default("created") // created | paid | cancelled
+  paymentId       String?   @map("payment_id")
+  erpPaymentEntry String?   @map("erp_payment_entry")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  paidAt          DateTime? @map("paid_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, invoiceName])
+  @@map("payment_links")
+}
+
+/**
+ * One line of a bank statement or a forwarded bank SMS, and what it was matched to.
+ */
+model BankLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  date        String   @db.VarChar(10) // YYYY-MM-DD
+  amount      Decimal  @db.Decimal(14, 2) // always positive
+  direction   String // in | out
+  description String
+  reference   String?
+  balance     Decimal? @db.Decimal(14, 2)
+  source      String // statement | sms
+  fingerprint String // dedupe across overlapping statements and SMS
+  status      String   @default("unmatched") // unmatched | suggested | matched | ignored
+  matchType   String?  @map("match_type") // Sales Invoice | Purchase Invoice | Payment Entry | Journal Entry
+  matchName   String?  @map("match_name")
+  draftId     String?  @map("draft_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, fingerprint])
+  @@index([tenantId, status])
+  @@map("bank_lines")
 }

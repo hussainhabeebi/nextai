@@ -319,7 +319,7 @@ export const appRoutes =
       name: z.string().min(2).max(200).optional(),
       language: z.enum(['en', 'ml', 'ar']).optional(),
       settings: tenantSettingsSchema
-        .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true })
+        .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true, taxRegime: true, taxCalendar: true, paymentLinks: true })
         .partial()
         .optional(),
     });

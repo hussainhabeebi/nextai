@@ -1,12 +1,12 @@
 'use client';
 
-import { FileText, Plus, Send } from 'lucide-react';
+import { FileText, Link2, Plus, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Page } from '@/components/page';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, Empty, Skeleton } from '@/components/ui/card';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useI18n } from '@/lib/i18n';
@@ -33,6 +33,7 @@ export default function Sales() {
   const { t } = useI18n();
   const [tab, setTab] = useState<(typeof TABS)[number]['key']>('invoice');
   const { data, loading, reload } = useApi<{ items: Inv[] }>(`/v1/invoices?type=${tab}`);
+  const online = useApi<{ connected: boolean }>('/v1/payments/razorpay');
   const [toast, setToast] = useState('');
 
   const openPdf = async (name: string) => {
@@ -43,6 +44,16 @@ export default function Sales() {
   const share = async (name: string) => {
     await api.post(`/v1/invoices/${encodeURIComponent(name)}/send`);
     setToast(`Invoice ${name} is being sent on WhatsApp`);
+  };
+  const payLink = async (name: string) => {
+    try {
+      const { url } = await api.post<{ url: string }>(`/v1/invoices/${encodeURIComponent(name)}/payment-link`);
+      if (navigator.share) await navigator.share({ title: `Invoice ${name}`, url }).catch(() => undefined);
+      else await navigator.clipboard?.writeText(url);
+      setToast(`Payment link for ${name}: ${url}`);
+    } catch (e) {
+      setToast((e as ApiError).message);
+    }
   };
 
   return (
@@ -89,6 +100,11 @@ export default function Sales() {
                   <Button variant="secondary" onClick={() => void share(inv.name)}>
                     <Send className="h-4 w-4" /> WhatsApp
                   </Button>
+                  {online.data?.connected && (inv.outstanding_amount ?? 0) > 0 && (
+                    <Button variant="secondary" className="col-span-2" onClick={() => void payLink(inv.name)}>
+                      <Link2 className="h-4 w-4" /> Payment link
+                    </Button>
+                  )}
                 </div>
               )}
             </Card>

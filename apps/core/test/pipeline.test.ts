@@ -68,7 +68,9 @@ describe('creating accounts from WhatsApp', () => {
     const id = ++conv;
     await say('Create supplier account AM Motors', id);
     expect(cw().lastText(id)).toMatch(/Supplier "AM Motors" added/);
-    expect(docs().get('Supplier')!.get('AM Motors')).toMatchObject({ supplier_name: 'AM Motors', supplier_group: 'All Supplier Groups' });
+    // never the root group: ERPNext rejects "All Supplier Groups"; a site without a leaf group gets "General"
+    expect(docs().get('Supplier')!.get('AM Motors')).toMatchObject({ supplier_name: 'AM Motors', supplier_group: 'General' });
+    expect(docs().get('Supplier Group')!.get('General')).toMatchObject({ parent_supplier_group: 'All Supplier Groups', is_group: 0 });
     await say('add am motors as a vendor', id);
     expect(cw().lastText(id)).toMatch(/already in your books/);
     expect([...docs().get('Supplier')!.values()].filter((s) => String(s.supplier_name).toLowerCase() === 'am motors')).toHaveLength(1);
@@ -143,6 +145,66 @@ describe('creating accounts from WhatsApp', () => {
     expect(leaf('Office Deposit')).toMatchObject({ parent_account: 'Current Assets - AIL' });
     await say('create capital account Hussain', id);
     expect(cw().lastText(id)).toMatch(/already in your books \(under Capital Account\)/);
+  });
+
+  it('money from the owner/director is capital, not a customer receipt; drawings and loans likewise', async () => {
+    const T = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } });
+    const erp = c.erp(T.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    const company = erpContext(T.tenant).company;
+    const docs = () => c.erps.get(T.tenant.id)!.docs;
+    await erp.create('Account', { name: 'Capital Account - AIL', account_name: 'Capital Account', company, is_group: 1, root_type: 'Liability', parent_account: 'Source of Funds (Liabilities) - AIL' });
+    await erp.create('Account', { name: 'Loans (Liabilities) - AIL', account_name: 'Loans (Liabilities)', company, is_group: 1, root_type: 'Liability', parent_account: 'Source of Funds (Liabilities) - AIL' });
+    await erp.create('Account', { name: 'Cash - AIL', account_name: 'Cash', company, is_group: 0, root_type: 'Asset', account_type: 'Cash', parent_account: 'Cash In Hand - AIL' });
+    await erp.create('Customer Group', { name: 'All Customer Groups', is_group: 1 });
+    await erp.create('Customer Group', { name: 'Commercial', is_group: 0, parent_customer_group: 'All Customer Groups' });
+    c.chatwoot(T.tenant);
+    const cw = () => c.cws.get(T.tenant.id)!;
+    const say = (text: string, conversationId: number) => sayAs(text, conversationId, T);
+    const lastJe = () => [...docs().get('Journal Entry')!.values()].at(-1)!;
+
+    // the exact message from WhatsApp
+    const id = ++conv;
+    await say('Received Rs 50000 Cash from Hussain capital account by cash', id);
+    expect(cw().lastText(id)).toMatch(/Money received[\s\S]*Capital introduced by Hussain[\s\S]*new capital account[\s\S]*Received in: cash[\s\S]*50,000/);
+    expect(cw().lastText(id)).not.toMatch(/Customer:/);
+    await say('1', id);
+    await drain(c);
+    expect(docs().get('Customer')?.size ?? 0).toBe(0); // no customer called "Hussain Capital Account"
+    const hussain = [...docs().get('Account')!.values()].find((a) => a.account_name === 'Hussain')!;
+    expect(hussain).toMatchObject({ parent_account: 'Capital Account - AIL', is_group: 0 });
+    expect(lastJe()).toMatchObject({ docstatus: 1, voucher_type: 'Cash Entry' });
+    expect(lastJe().accounts).toEqual([
+      { account: hussain.name, debit_in_account_currency: 0, credit_in_account_currency: 50000 },
+      { account: 'Cash - AIL', debit_in_account_currency: 50000, credit_in_account_currency: 0 },
+    ]);
+
+    // next time the existing capital account is used; other ways of saying it
+    const id2 = ++conv;
+    await say('director Hussain brought in 20000', id2);
+    expect(cw().lastText(id2)).toMatch(/Money received[\s\S]*Account: Hussain/);
+    await say('1', id2);
+    await drain(c);
+    expect((lastJe().accounts as unknown[])[0]).toMatchObject({ account: hussain.name, credit_in_account_currency: 20000 });
+    const id3 = ++conv;
+    await say('paid 5000 to Hussain drawings', id3);
+    expect(cw().lastText(id3)).toMatch(/Money paid[\s\S]*Drawings by Hussain/);
+    await say('1', id3);
+    await drain(c);
+    expect(lastJe().accounts).toEqual([
+      { account: hussain.name, debit_in_account_currency: 5000, credit_in_account_currency: 0 },
+      { account: 'Cash - AIL', debit_in_account_currency: 0, credit_in_account_currency: 5000 },
+    ]);
+    const id4 = ++conv;
+    await say('received 200000 from SBI loan by bank', id4);
+    expect(cw().lastText(id4)).toMatch(/Loan received from SBI[\s\S]*SBI \(new loan account/);
+
+    // ordinary customers still work, in a real (leaf) customer group
+    const id5 = ++conv;
+    await say('received 3000 from Ravi Traders', id5);
+    expect(cw().lastText(id5)).toMatch(/Payment received[\s\S]*Customer: Ravi Traders/);
+    await say('1', id5);
+    await drain(c);
+    expect(docs().get('Customer')!.get('Ravi Traders')).toMatchObject({ customer_group: 'Commercial' });
   });
 });
 
