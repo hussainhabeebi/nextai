@@ -45,6 +45,10 @@ export const tenantSettingsSchema = z.object({
   accounts: z.record(z.string()).default({}),
   taxTemplates: z.record(z.string()).default({}),
   autoSendInvoices: z.boolean().default(true),
+  /** Online payment links (Razorpay, India) on invoices and reminders. Account/mode are set up in ERPNext on connect. */
+  paymentLinks: z
+    .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
+    .default({}),
   featureFlags: z.record(z.boolean()).default({}),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;

@@ -1,6 +1,7 @@
 import { FakeChatwootClient } from '@nextai/chatwoot-client/testing';
 import { FakeErpClient } from '@nextai/erpnext-client/testing';
 import { FakePaymentProvider } from '@nextai/payments/testing';
+import { FakeRazorpayClient } from '../src/modules/razorpay/client.js';
 import { tenantSettingsSchema } from '@nextai/shared';
 import type { PrismaClient, Tenant } from '@prisma/client';
 import { Redis } from 'ioredis';
@@ -23,6 +24,7 @@ export interface TestContainer extends Container {
   mailer: MemoryMailer;
   erps: Map<string, FakeErpClient>;
   cws: Map<string, FakeChatwootClient>;
+  rzps: Map<string, FakeRazorpayClient>;
   close(): Promise<void>;
 }
 
@@ -32,6 +34,7 @@ export function testContainer(): TestContainer {
   shared ??= { prisma: createPrisma(), redis: new Redis(process.env.REDIS_URL!, { maxRetriesPerRequest: null }) };
   const erps = new Map<string, FakeErpClient>();
   const cws = new Map<string, FakeChatwootClient>();
+  const rzps = new Map<string, FakeRazorpayClient>();
   return {
     ...shared,
     queue: new MemoryJobQueue(),
@@ -41,10 +44,12 @@ export function testContainer(): TestContainer {
     erp: (t: Tenant) => erps.get(t.id) ?? erps.set(t.id, new FakeErpClient()).get(t.id)!,
     chatwoot: (t: Tenant) => cws.get(t.id) ?? cws.set(t.id, new FakeChatwootClient()).get(t.id)!,
     payments: new FakePaymentProvider(),
+    razorpay: (t: Tenant) => (t.rzpKeyId ? (rzps.get(t.id) ?? rzps.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined),
     provisioner: new FakeProvisionerClient(),
     mailer: new MemoryMailer(),
     erps,
     cws,
+    rzps,
     close: async () => {},
   };
 }

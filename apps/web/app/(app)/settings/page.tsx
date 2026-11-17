@@ -97,6 +97,8 @@ export default function SettingsPage() {
       </fieldset>
       {msg && <p role="status" className="mt-3 text-sm">{msg}</p>}
 
+      <OnlinePayments isOwner={isOwner} />
+
       <Card className="mt-6 space-y-3">
         <h2 className="font-semibold">Team</h2>
         <ul className="divide-y divide-line text-sm">
@@ -131,5 +133,84 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
       <span className="text-sm">{label}</span>
       <input type="checkbox" className="h-6 w-11 shrink-0 cursor-pointer appearance-none rounded-full bg-line transition before:block before:h-6 before:w-6 before:rounded-full before:bg-white before:shadow before:transition checked:bg-brand checked:before:translate-x-5 rtl:checked:before:-translate-x-5" checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </label>
+  );
+}
+
+type Rzp = { available: boolean; connected: boolean; keyId: string | null; mode: 'live' | 'test' | null; webhookUrl: string; account: string | null; modeOfPayment: string | null };
+type Connected = { webhook: { url: string; secret: string; events: string[] }; erp: { ledger: string; modeOfPayment: string | null; razorpaySettings: string } };
+
+/** Razorpay: payment links on invoices and reminders; payments are recorded in ERPNext automatically. */
+function OnlinePayments({ isOwner }: { isOwner: boolean }) {
+  const { data, reload } = useApi<Rzp>('/v1/payments/razorpay');
+  const [keys, setKeys] = useState({ keyId: '', keySecret: '' });
+  const [done, setDone] = useState<Connected | null>(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!data || !data.available) return null;
+  const connect = async () => {
+    setErr('');
+    setBusy(true);
+    try {
+      setDone(await api.post<Connected>('/v1/payments/razorpay', keys));
+      setKeys({ keyId: '', keySecret: '' });
+      await reload();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    if (!confirm('Stop adding payment links to invoices and reminders?')) return;
+    await api.request('/v1/payments/razorpay', { method: 'DELETE' });
+    setDone(null);
+    await reload();
+  };
+  return (
+    <Card className="mt-6 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold">Online payments (Razorpay)</h2>
+        {data.connected && <Badge tone={data.mode === 'live' ? 'green' : 'amber'}>{data.mode === 'live' ? 'Live' : 'Test mode'}</Badge>}
+      </div>
+      <p className="text-sm text-muted">
+        Customers get a UPI / card payment link with every invoice and reminder. When they pay, the payment is recorded against the invoice in your books and they get a receipt.
+      </p>
+      {done && (
+        <div className="space-y-2 rounded-xl bg-brand-light p-3 text-sm text-brand-dark">
+          <p className="font-semibold">Connected ✅ One more step in Razorpay:</p>
+          <p>Razorpay → Account &amp; Settings → Webhooks → Add new webhook</p>
+          <p>URL: <code className="break-all">{done.webhook.url}</code></p>
+          <p>Secret: <code className="break-all">{done.webhook.secret}</code> (shown only now)</p>
+          <p>Event: <code>payment_link.paid</code></p>
+          <p className="pt-1">
+            ERPNext: ledger <b>{done.erp.ledger}</b>{done.erp.modeOfPayment ? <>, mode of payment <b>{done.erp.modeOfPayment}</b></> : null}
+            {done.erp.razorpaySettings === 'updated' ? ', Razorpay Settings filled in.' : '. (ERPNext\'s own Razorpay app isn\'t installed; NextAi handles the links.)'}
+          </p>
+        </div>
+      )}
+      {data.connected ? (
+        <div className="space-y-2 text-sm">
+          <p>Key: <code>{data.keyId}</code></p>
+          {data.account && <p>Payments go to <b>{data.account}</b> until Razorpay settles them to your bank.</p>}
+          {!done && <p className="text-muted">Webhook URL: <code className="break-all">{data.webhookUrl}</code></p>}
+          {isOwner && <Button variant="secondary" onClick={() => void disconnect()}>Disconnect</Button>}
+        </div>
+      ) : isOwner ? (
+        <div className="space-y-2">
+          <Field label="Key ID" hint="Razorpay → Account & Settings → API Keys">
+            <Input placeholder="rzp_live_…" value={keys.keyId} onChange={(e) => setKeys({ ...keys, keyId: e.target.value.trim() })} />
+          </Field>
+          <Field label="Key secret">
+            <Input type="password" autoComplete="off" value={keys.keySecret} onChange={(e) => setKeys({ ...keys, keySecret: e.target.value.trim() })} />
+          </Field>
+          <Button onClick={() => void connect()} disabled={busy || keys.keyId.length < 8 || keys.keySecret.length < 8}>
+            {busy ? 'Connecting…' : 'Connect Razorpay'}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-sm text-muted">Ask the owner to connect Razorpay.</p>
+      )}
+      {err && <p role="alert" className="text-sm text-red-600">{err}</p>}
+    </Card>
   );
 }

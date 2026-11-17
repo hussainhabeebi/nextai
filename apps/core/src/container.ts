@@ -9,6 +9,7 @@ import type { ObjectStorage } from './storage/storage.js';
 import type { JobQueue } from './lib/queue.js';
 import type { ProvisionerClient } from './modules/provisioning/provisioner-client.js';
 import type { Mailer } from './modules/email/mailer.js';
+import type { RazorpayClient } from './modules/razorpay/client.js';
 
 /** Everything with side effects lives here so tests can swap in fakes. */
 export interface Container {
@@ -22,6 +23,8 @@ export interface Container {
   erp: (tenant: Tenant) => ErpClient;
   chatwoot: (tenant: Tenant) => ChatwootClient;
   payments: PaymentProvider;
+  /** The tenant's own Razorpay account for invoice payment links (undefined until connected). */
+  razorpay: (tenant: Tenant) => RazorpayClient | undefined;
   provisioner: ProvisionerClient;
   mailer: Mailer;
 }

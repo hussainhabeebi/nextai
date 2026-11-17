@@ -5,6 +5,7 @@ import { signupRoutes } from './signup.js';
 import { meRoutes } from './me.js';
 import { appRoutes } from './app.js';
 import { billingRoutes } from './billing.js';
+import { onlinePaymentRoutes } from './online-payments.js';
 
 export const v1Routes =
   (c: Container): FastifyPluginAsyncZod =>
@@ -18,5 +19,6 @@ export const v1Routes =
       await authed.register(meRoutes(c));
       await authed.register(appRoutes(c));
       await authed.register(billingRoutes(c));
+      await authed.register(onlinePaymentRoutes(c));
     });
   };
