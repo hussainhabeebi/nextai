@@ -29,28 +29,56 @@ document.querySelectorAll<HTMLButtonElement>('[data-signup]').forEach(button=>bu
 $('.close').addEventListener('click',()=>dialog.close());
 dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close()}});
 let inFlight=false;
+const owner=$<HTMLInputElement>('#owner');
+const email=$<HTMLInputElement>('#email');
+const website=$<HTMLInputElement>('#website');
+const codeForm=$<HTMLFormElement>('#code-form');
+const code=$<HTMLInputElement>('#code');
+const verifyURL=form.dataset.endpoint!.replace(/\/+$/,'')+'/verify';
+let signupId='';
+const planOf=(p:string)=>['base','growth','pro'].includes(p)?p:undefined;
+const errorText=async(r:Response)=>{try{const j=await r.json();return typeof j?.message==='string'?j.message:''}catch{return''}};
 form.addEventListener('submit',async e=>{
  e.preventDefault();if(inFlight)return;
- const name=business.value.trim();let digits=phone.value.replace(/\D/g,'');
+ const name=business.value.trim();const ownerName=owner.value.trim();const mail=email.value.trim();let digits=phone.value.replace(/\D/g,'');
  if(phone.value.trim().startsWith('+')&&digits.startsWith(dial.value))digits=digits.slice(dial.value.length);
  if(dial.value==='971'&&digits.startsWith('0'))digits=digits.slice(1);
  const phoneOK=dial.value==='91'?/^[6-9]\d{9}$/.test(digits):/^5\d{8}$/.test(digits);
+ const mailOK=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail);
  $('#business-error').textContent=name?'':'Please enter your business name.';
+ $('#owner-error').textContent=ownerName?'':'Please enter your name.';
+ $('#email-error').textContent=mailOK?'':'Enter a valid email; we send your code there.';
  $('#phone-error').textContent=phoneOK?'':dial.value==='91'?'Enter a valid 10-digit Indian mobile number.':'Enter a UAE mobile number, for example 50 123 4567.';
- business.setAttribute('aria-invalid',String(!name));phone.setAttribute('aria-invalid',String(!phoneOK));
- if(!name||!phoneOK){(!name?business:phone).focus();return;}
- const submit=form.querySelector<HTMLButtonElement>('[type="submit"]')!;inFlight=true;submit.disabled=true;submit.textContent='Starting your free trial…';status.textContent='';status.className='';track('signup_submit',{country:country.value,language:language.value,plan:chosenPlan});
- const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),12000);
+ business.setAttribute('aria-invalid',String(!name));owner.setAttribute('aria-invalid',String(!ownerName));email.setAttribute('aria-invalid',String(!mailOK));phone.setAttribute('aria-invalid',String(!phoneOK));
+ if(!name||!ownerName||!mailOK||!phoneOK){(!name?business:!ownerName?owner:!mailOK?email:phone).focus();return;}
+ const submit=form.querySelector<HTMLButtonElement>('[type="submit"]')!;inFlight=true;submit.disabled=true;submit.textContent='Sending your code…';status.textContent='';status.className='';track('signup_submit',{country:country.value,language:language.value,plan:chosenPlan});
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
  try{
- const response=await fetch(form.dataset.endpoint!,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessName:name,phone:`+${dial.value}${digits}`,country:country.value,language:language.value,utm}),signal:controller.signal});
- if(!response.ok)throw new Error('signup failed');
- form.hidden=true;status.className='status-success';status.textContent='Check WhatsApp — we’ve sent you a message to get started.';
- const link=document.createElement('a');link.className='button';link.textContent='Open WhatsApp ↗';link.href=chatURL;link.target='_blank';link.rel='noopener noreferrer';
- if(hasWhatsApp)status.append(link);else{const note=document.createElement('p');note.textContent='The direct chat link is not configured yet. Contact hello@nextaierp.com if your message does not arrive.';status.append(note);}
- track('signup_success',{country:country.value});
- }catch{status.className='status-error';status.textContent='We couldn’t start your trial just now. Please try again, or use the WhatsApp link below. '+(!hasWhatsApp?'While our chat link is being connected, email hello@nextaierp.com.':'');track('signup_error');}
+  const response=await fetch(form.dataset.endpoint!,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessName:name,ownerName,email:mail,phone:`+${dial.value}${digits}`,country:country.value,language:language.value,plan:planOf(chosenPlan),utm,website:website.value||undefined}),signal:controller.signal});
+  if(!response.ok){const msg=await errorText(response);throw new Error(msg||'signup failed');}
+  const body=await response.json() as {signupId:string;devCode?:string};
+  signupId=body.signupId;form.hidden=true;codeForm.hidden=false;if(body.devCode)code.value=body.devCode;
+  status.className='status-success';status.textContent=`We’ve emailed a 6-digit code to ${mail}. Check spam if you don’t see it.`;
+  code.focus();track('signup_code_sent',{country:country.value});
+ }catch(err){status.className='status-error';status.textContent=(err as Error).message&&(err as Error).message!=='signup failed'?(err as Error).message:'We couldn’t start your trial just now. Please try again, or email hello@nextaierp.com.';track('signup_error');}
  finally{clearTimeout(timer);inFlight=false;submit.disabled=false;submit.innerHTML='Start free <span aria-hidden="true">↗</span>';}
 });
+codeForm.addEventListener('submit',async e=>{
+ e.preventDefault();if(inFlight)return;
+ const value=code.value.replace(/\D/g,'');
+ $('#code-error').textContent=/^\d{6}$/.test(value)?'':'Enter the 6 digits from the email.';
+ if(!/^\d{6}$/.test(value)){code.focus();return;}
+ const submit=codeForm.querySelector<HTMLButtonElement>('[type="submit"]')!;inFlight=true;submit.disabled=true;submit.textContent='Setting up your books…';
+ try{
+  const response=await fetch(verifyURL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signupId,code:value})});
+  if(!response.ok){const msg=await errorText(response);throw new Error(msg||'That code didn’t work. Please try again.');}
+  const body=await response.json() as {loginUrl:string};
+  status.className='status-success';status.textContent='You’re in! Opening NextAi…';track('signup_success',{country:country.value});
+  location.href=body.loginUrl;
+ }catch(err){status.className='status-error';status.textContent=(err as Error).message;track('signup_verify_error');}
+ finally{inFlight=false;submit.disabled=false;submit.innerHTML='Verify and open NextAi <span aria-hidden="true">↗</span>';}
+});
+$('#code-back').addEventListener('click',()=>{codeForm.hidden=true;form.hidden=false;status.textContent='';status.className='';signupId='';});
 language.addEventListener('change',()=>{const url=new URL(language.value==='en'?'/':`/${language.value}/`,location.origin);url.search=location.search;location.href=url.href;});
 const lang=document.documentElement.lang;
 // Text keys can be replaced independently when approved translations are available.

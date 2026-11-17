@@ -67,7 +67,7 @@ export class FakeErpClient implements ErpClient {
       .map((w) => w[0])
       .join('')
       .toUpperCase();
-    const name = (doc.name as string) ?? (doc.customer_name as string) ?? (doc.supplier_name as string) ?? `${prefix}-${++this.seq}`;
+    const name = (doc.name as string) ?? (doc.customer_name as string) ?? (doc.supplier_name as string) ?? (doc.company_name as string) ?? `${prefix}-${++this.seq}`;
     const created: ErpDoc = { ...doc, name, doctype, docstatus: 0 };
     this.table(doctype).set(name, created);
     return created as T;

@@ -136,6 +136,7 @@ export const integrationRoutes =
             },
             owner: owner ? { name: owner.name, phone: owner.phone, email: owner.email } : null,
             emailReports: s.success ? s.data.emailReports : { enabled: true, recipients: [] },
+            signedUpAt: ((tn.settings as { signup?: { at?: string } } | null)?.signup?.at as string | undefined) ?? null,
           };
         }),
       };

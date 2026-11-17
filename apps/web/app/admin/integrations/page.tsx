@@ -18,6 +18,7 @@ type TenantRow = {
   erpnext: { connected: boolean; siteUrl: string | null; company: string | null; abbr: string | null };
   owner: { name: string; phone: string | null; email: string | null } | null;
   emailReports: { enabled: boolean; recipients: string[] };
+  signedUpAt: string | null;
 };
 type Status = {
   chatwoot: {
@@ -100,6 +101,12 @@ function TenantPanel({ t, canConnect, onSaved }: { t: TenantRow; canConnect: boo
       <summary className="flex cursor-pointer flex-wrap items-center gap-2 p-4">
         <span className="font-medium">{t.name}</span>
         <span className="text-xs text-muted">{t.slug}</span>
+        {t.signedUpAt && (
+          <Badge tone={t.chatwoot.connected ? 'neutral' : 'amber'}>
+            Website signup {new Date(t.signedUpAt).toLocaleDateString()}
+            {t.chatwoot.connected ? '' : ': connect WhatsApp'}
+          </Badge>
+        )}
         <Badge tone={t.chatwoot.connected ? 'green' : 'amber'}>
           {t.chatwoot.connected ? `WhatsApp inbox ${t.chatwoot.inboxId}` : 'WhatsApp not connected'}
         </Badge>

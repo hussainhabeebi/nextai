@@ -90,6 +90,35 @@ ERPNEXT_TEST_COMPANY="Your Company" ERPNEXT_TEST_ABBR=YC pnpm --filter @nextai/c
 
 This creates real (test) documents in that company: use a test site or company.
 
+## 1c. Self-signup from the website (10 min)
+
+New clients sign up on nextaierp.com: business name, their name, email, WhatsApp number, country. They get a
+6-digit **email** code; nothing is created until it is verified. Then NextAi:
+
+1. creates the business on a 14-day trial (plan from the pricing button, Growth by default) and its owner,
+2. creates **its own company in your shared ERPNext site** (background job `tenant.setup`, retried, never duplicated),
+3. logs them straight into the app (one-time link) and emails a welcome; admins get "New signup" by email,
+4. sends app login codes by **email** until their WhatsApp number is connected.
+
+You then connect their WhatsApp Business number (Chatwoot inbox → Admin → Integrations). Website signups show a
+**"Website signup: connect WhatsApp"** badge there.
+
+Setup (Coolify → Environment Variables, then Redeploy):
+
+```ini
+LANDING_URL=https://nextaierp.com          # the website allowed to call /v1/signup
+SIGNUP_ENABLED=true                        # false pauses signups
+ERPNEXT_SHARED_URL=https://books.nextaierp.com
+ERPNEXT_SHARED_API_KEY=...                 # API user with System Manager (it creates companies)
+ERPNEXT_SHARED_API_SECRET=...
+```
+
+- The shared site must have finished the ERPNext setup wizard (it provides the fiscal year and base data).
+  For Indian clients install **India Compliance** there, so GST templates are created with each company.
+- Without `ERPNEXT_SHARED_*` signup still works; connect ERPNext per client in Admin → Integrations.
+- The website needs `PUBLIC_SIGNUP_ENDPOINT=https://api.nextaierp.com/v1/signup` (its default) and Resend
+  configured on the API (the code is sent by email).
+
 ## 2. WhatsApp via Chatwoot (`app.aiingo.com`) (20–30 min per number)
 
 You need, per business (tenant): a **WhatsApp inbox** in Chatwoot, its **Account ID** and **Inbox ID**, and a
