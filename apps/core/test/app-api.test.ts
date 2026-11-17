@@ -98,6 +98,10 @@ describe('customer app API', () => {
     const an = await app.inject({ method: 'GET', url: '/v1/analytics?period=this_month', headers: auth(tokA) });
     expect(an.statusCode).toBe(200);
     expect(an.json().expenseByAccount[0]).toMatchObject({ account: 'Office Rent', ledger: 'Office Rent - AIL', amount: 4000 });
+    // every figure read without errors (the fake rejects "sum(debit)"-style fields, as current Frappe does)
+    expect(an.json().errors).toEqual([]);
+    expect(an.json().balances).toMatchObject({ cash: 25000, bank: 506000 });
+    expect(an.json().trend.at(-1)).toMatchObject({ month: today.slice(0, 7), income: 10000, expenses: 4000 });
     const lines = await app.inject({ method: 'GET', url: `/v1/analytics/entries?account=${encodeURIComponent('Office Rent - AIL')}&from=2026-01-01&to=${today}`, headers: auth(tokA) });
     expect(lines.json().items).toHaveLength(1);
     expect((await app.inject({ method: 'GET', url: `/v1/analytics/entries?from=2026-01-01&to=${today}`, headers: auth(tokA) })).statusCode).toBe(400);

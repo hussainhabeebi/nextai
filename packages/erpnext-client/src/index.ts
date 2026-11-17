@@ -30,10 +30,9 @@ export type ErpDoc = Record<string, unknown> & { name?: string; doctype?: string
 
 export interface ListOptions {
   filters?: Array<[string, string, unknown]> | Record<string, unknown>;
+  /** Plain column names only: current Frappe rejects SQL functions written as strings ("sum(debit) as debit"). */
   fields?: string[];
   orderBy?: string;
-  /** SQL GROUP BY over the listed fields (aggregates like "sum(debit) as debit" allowed in `fields`). */
-  groupBy?: string;
   limit?: number;
   start?: number;
 }
@@ -226,7 +225,6 @@ export class HttpErpClient implements ErpClient {
     if (opts.filters) q.set('filters', JSON.stringify(opts.filters));
     q.set('fields', JSON.stringify(opts.fields ?? ['name']));
     if (opts.orderBy) q.set('order_by', opts.orderBy);
-    if (opts.groupBy) q.set('group_by', opts.groupBy);
     q.set('limit_page_length', String(opts.limit ?? 20));
     if (opts.start) q.set('limit_start', String(opts.start));
     return this.json<T[]>(`/api/resource/${encodeURIComponent(doctype)}?${q.toString()}`);
