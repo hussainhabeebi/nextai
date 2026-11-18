@@ -208,6 +208,65 @@ describe('creating accounts from WhatsApp', () => {
   });
 });
 
+describe('everyday transactions over WhatsApp post the right ERPNext document', () => {
+  it('payments in/out, purchases, returns and cash ↔ bank transfers', async () => {
+    const T = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } });
+    const erp = c.erp(T.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    const company = erpContext(T.tenant).company;
+    await erp.create('Account', { name: 'Cash - AIL', account_name: 'Cash', company, is_group: 0, root_type: 'Asset', account_type: 'Cash', parent_account: 'Cash In Hand - AIL' });
+    await erp.create('Account', { name: 'Bank Account - AIL', account_name: 'Bank Account', company, is_group: 0, root_type: 'Asset', account_type: 'Bank', parent_account: 'Bank Accounts - AIL' });
+    c.chatwoot(T.tenant);
+    const cw = () => c.cws.get(T.tenant.id)!;
+    const docs = (d: string) => [...(c.erps.get(T.tenant.id)!.docs.get(d)?.values() ?? [])];
+    const say = (text: string, conversationId: number) => sayAs(text, conversationId, T);
+    const confirm = async (text: string, expected: RegExp) => {
+      const id = ++conv;
+      await say(text, id);
+      expect(cw().lastText(id)).toMatch(expected);
+      await say('1', id);
+      await drain(c);
+      return id;
+    };
+
+    // the exact message that used to get the help menu back
+    await confirm('Received Rs 6300 from 4L fashion', /Payment received[\s\S]*Customer: 4L fashion[\s\S]*6,300/);
+    expect(docs('Payment Entry').at(-1)).toMatchObject({ docstatus: 1, payment_type: 'Receive', party_type: 'Customer', party: '4L fashion', paid_amount: 6300 });
+
+    await confirm('paid 2500 to 4L fashion by bank', /Payment made[\s\S]*Supplier: 4L fashion[\s\S]*2,500/);
+    expect(docs('Payment Entry').at(-1)).toMatchObject({ docstatus: 1, payment_type: 'Pay', party_type: 'Supplier', party: '4L fashion', paid_from: 'Bank Account - AIL' });
+
+    await confirm('bought cement for 12000 from AM Motors', /Purchase bill[\s\S]*Supplier: AM Motors[\s\S]*cement[\s\S]*12,000/);
+    const bill = docs('Purchase Invoice').at(-1)!;
+    expect(bill).toMatchObject({ docstatus: 1, supplier: 'AM Motors' });
+    expect(bill.is_paid).toBeUndefined(); // bought on credit unless they say how it was paid
+
+    await confirm('Ravi returned goods worth 1500', /Sales return \(credit note\)[\s\S]*Customer: Ravi[\s\S]*1,500/);
+    const cn = docs('Sales Invoice').at(-1)!;
+    expect(cn).toMatchObject({ docstatus: 1, customer: 'Ravi', is_return: 1 });
+    expect((cn.items as Array<Record<string, unknown>>)[0]).toMatchObject({ qty: -1, rate: 1500 });
+
+    await confirm('returned goods 800 to AM Motors', /Purchase return \(debit note\)[\s\S]*Supplier: AM Motors[\s\S]*800/);
+    expect(docs('Purchase Invoice').at(-1)).toMatchObject({ docstatus: 1, supplier: 'AM Motors', is_return: 1 });
+
+    await confirm('deposited 10000 cash in bank', /Cash ↔ bank transfer[\s\S]*To: Bank Account[\s\S]*10,000/);
+    expect(docs('Journal Entry').at(-1)).toMatchObject({ docstatus: 1, voucher_type: 'Contra Entry' });
+    expect(docs('Journal Entry').at(-1)!.accounts).toEqual([
+      { account: 'Bank Account - AIL', debit_in_account_currency: 10000, credit_in_account_currency: 0 },
+      { account: 'Cash - AIL', debit_in_account_currency: 0, credit_in_account_currency: 10000 },
+    ]);
+    await confirm('withdrew 3000 from bank', /Cash ↔ bank transfer[\s\S]*To: Cash[\s\S]*3,000/);
+    expect(docs('Journal Entry').at(-1)!.accounts).toEqual([
+      { account: 'Cash - AIL', debit_in_account_currency: 3000, credit_in_account_currency: 0 },
+      { account: 'Bank Account - AIL', debit_in_account_currency: 0, credit_in_account_currency: 3000 },
+    ]);
+
+    // something it cannot read says so, instead of only repeating the menu
+    const id = ++conv;
+    await say('blah blah xyz', id);
+    expect(cw().lastText(id)).toMatch(/didn't understand "blah blah xyz"[\s\S]*You can:/);
+  });
+});
+
 describe('OCR → draft → confirm → post', () => {
   it('posts a purchase invoice to ERPNext after "1", attaches the bill and learns the vendor', async () => {
     const id = ++conv;

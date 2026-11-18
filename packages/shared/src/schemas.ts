@@ -145,6 +145,10 @@ export const draftPayloadSchema = z.object({
   direction: z.enum(['in', 'out']).optional(),
   /** Journal entry: the ledger to create on confirm when it doesn't exist yet (e.g. a new capital account). */
   newAccount: z.object({ kind: z.string(), name: z.string() }).optional(),
+  /** Sales/purchase invoice: a return (ERPNext credit note / debit note), posted with is_return and negative quantities. */
+  isReturn: z.boolean().optional(),
+  /** Journal entry: the ERPNext voucher type when not the cash/bank default, e.g. "Contra Entry" for cash ↔ bank. */
+  voucherType: z.string().optional(),
   validationIssues: z.array(z.string()).default([]),
 });
 export type DraftPayload = z.infer<typeof draftPayloadSchema>;

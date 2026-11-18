@@ -144,14 +144,22 @@ Today is ${ctx.today}; the business currency is ${ctx.currency}. People write ca
 and English mixed with Malayalam (Manglish, e.g. "kaasu kitti", "koduthu", "vangi", "add cheyyu") or Arabic. Understand the meaning, not exact words.
 
 Intents (pick exactly one):
-- record_expense: they spent money on something. "petrol 500", "tea 50 cash", "paid electricity bill 3200", "rent koduthu 15000"
+- record_expense: they spent money on something. "petrol 500", "tea 50 cash", "paid electricity bill 3200", "rent koduthu 15000",
+  "paid salary 25000 to Ajith" (description "salary – Ajith": salary/rent/wages paid to a person are expenses, not supplier payments)
 - record_sale: they sold or billed a customer. "sold 5000 to Ravi", "Ravi ku 2000 nte sale", "bill 3500 for Anil"
+- record_purchase: they bought goods/services from a named supplier (a supplier bill, usually on credit). "bought cement for 12000 from AM Motors",
+  "purchased 9000 from 4L Fashion", "goods received from AM Motors 12000", "AM Motors il ninnu 5000 nte saadhanam vangi"
+- sales_return: a customer returned goods (credit note). "Ravi returned goods worth 1500", "sales return 2000 from 4L Fashion", "credit note 500 to Anil"
+- purchase_return: they returned goods to a supplier (debit note). "returned 1500 goods to AM Motors", "purchase return 2000 AM Motors", "debit note 800 to X"
+- transfer: cash moved between cash in hand and the bank. description "deposit" (cash put into the bank: "deposited 10000 cash in bank",
+  "cash deposit 5000") or "withdrawal" (cash taken out of the bank: "withdrew 5000 from bank", "atm 2000", "bank to cash 3000")
 - payment_in: money came in from someone: a customer paying, or the owner/director/partner putting in capital, or a loan received.
   "Ravi paid 2000", "got 5k from Shop 24", "received 1500 from Anil by upi", "Anil kaasu thannu 1000",
+  "Received Rs 6300 from 4L fashion" (party "4L fashion": names can start with digits; 4L here is part of the name, not 4 lakh),
   "received 50000 cash from Hussain capital account" (party "Hussain capital account", description "capital"),
   "director Hussain brought in 1 lakh" (description "capital"), "loan 2 lakh received from SBI" (party "SBI", description "loan")
 - payment_out: money went out to someone: a supplier, a named person, the owner's drawings or a loan repayment.
-  "paid 8000 to AM Motors", "gave 500 to Suresh", "Hussain took 10000 for personal use" (description "drawings"), "repaid 20000 SBI loan" (description "loan")
+  "paid 8000 to AM Motors", "gave 500 to Suresh", "advance 2000 to Ravi", "Hussain took 10000 for personal use" (description "drawings"), "repaid 20000 SBI loan" (description "loan")
 - add_party: create a customer or supplier (a "party", "account", "contact" or "ledger" for a person or business).
   "Create supplier account AM Motors", "add AM Motors as vendor", "new customer Ravi Traders", "Ravi ne customer aayi add cheyyu"
 - add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
@@ -165,7 +173,7 @@ Intents (pick exactly one):
 - help: greetings or when nothing above fits.
 
 Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier name as written;
-description = what the money was for (say "capital", "drawings" or "loan" when it is one of those); date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
+description = what the money was for (say "capital", "drawings" or "loan" when it is one of those; "deposit" or "withdrawal" for transfer); date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
 kind (add_party / add_account) = one of customer, supplier, expense, direct_expense, income, direct_income, bank, cash, capital, liability, loan,
 tax, asset, fixed_asset, loan_advance, stock, investment (empty if not said); accountName (add_account) = the ledger name;
 group (add_account) = the account group if they name one ("under Capital Account" → Capital Account), else empty;
