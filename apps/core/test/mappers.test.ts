@@ -50,3 +50,27 @@ describe('expense account from the real chart, not always Miscellaneous', () => 
     expect(findLedger('yacht', ledgers)).toBeUndefined();
   });
 });
+
+describe('returns and cash ↔ bank transfers', () => {
+  const base = { date: '2026-11-18', currency: 'INR' as const, validationIssues: [] };
+  it('a sales return is a credit note: Sales Invoice with is_return and negative quantity', () => {
+    const doc = toErpDoc('sales_invoice', { ...base, partyName: 'Ravi', isReturn: true, total: 1500, lines: [{ description: 'Goods returned', qty: 1, rate: 1500, amount: 1500 }] }, ctx());
+    expect(doc).toMatchObject({ doctype: 'Sales Invoice', customer: 'Ravi', is_return: 1 });
+    expect((doc.items as Array<Record<string, unknown>>)[0]).toMatchObject({ qty: -1, rate: 1500 });
+  });
+  it('a purchase return is a debit note and never marked paid', () => {
+    const doc = toErpDoc('purchase_invoice', { ...base, partyName: 'AM Motors', isReturn: true, paymentMode: 'cash', total: 800, lines: [{ description: 'Goods returned', qty: 1, rate: 800, amount: 800 }] }, ctx());
+    expect(doc).toMatchObject({ doctype: 'Purchase Invoice', supplier: 'AM Motors', is_return: 1 });
+    expect(doc.is_paid).toBeUndefined();
+    expect((doc.items as Array<Record<string, unknown>>)[0]).toMatchObject({ qty: -1 });
+  });
+  it('a cash deposit is a Contra Entry: bank debited, cash credited', () => {
+    const doc = toErpDoc('journal_entry', { ...base, lines: [], total: 10000, direction: 'out', voucherType: 'Contra Entry', expenseAccount: 'Bank Account - ATL', paymentMode: 'cash' }, ctx());
+    expect(doc).toMatchObject({ voucher_type: 'Contra Entry' });
+    expect(doc.cheque_no).toBeTruthy();
+    expect(doc.accounts).toEqual([
+      { account: 'Bank Account - ATL', debit_in_account_currency: 10000, credit_in_account_currency: 0 },
+      { account: 'Cash - ATL', debit_in_account_currency: 0, credit_in_account_currency: 10000 },
+    ]);
+  });
+});

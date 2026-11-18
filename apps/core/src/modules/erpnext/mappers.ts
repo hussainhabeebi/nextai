@@ -147,7 +147,8 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
   const lines = p.lines.length ? p.lines : [{ description: p.remarks ?? 'Expense', qty: 1, rate: p.total, amount: p.total }];
   switch (type) {
     case 'purchase_invoice': {
-      const paid = p.paymentMode && p.paymentMode !== 'credit' && p.paymentMode !== 'unknown';
+      // A return (debit note) is never "paid" here: ERPNext settles it against the supplier's balance.
+      const paid = !p.isReturn && p.paymentMode && p.paymentMode !== 'credit' && p.paymentMode !== 'unknown';
       return {
         doctype: 'Purchase Invoice',
         company: ctx.company,
@@ -160,11 +161,12 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         currency: p.currency,
         taxes_and_charges: p.taxTemplate,
         remarks,
+        ...(p.isReturn ? { is_return: 1 } : {}),
         items: lines.map((l) => ({
           item_code: l.itemCode,
           item_name: l.description.slice(0, 140),
           description: l.description,
-          qty: l.qty,
+          qty: p.isReturn ? -Math.abs(l.qty) : l.qty, // returns carry negative quantities in ERPNext
           rate: l.rate,
           uom: 'Nos',
           expense_account: l.account ?? p.expenseAccount ?? account(ctx, 'misc_expense'),
@@ -185,12 +187,12 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
       const credit = p.paidFromAccount ?? money.account;
       return {
         doctype: 'Journal Entry',
-        voucher_type: money.voucherType,
+        voucher_type: p.voucherType ?? money.voucherType,
         company: ctx.company,
         posting_date: p.date,
         // ERPNext requires a reference on Bank Entries.
-        cheque_no: p.referenceNo ?? (money.kind === 'cash' ? undefined : `NX-${p.documentId?.slice(0, 8) ?? Date.now()}`),
-        cheque_date: p.referenceNo || money.kind !== 'cash' ? p.date : undefined,
+        cheque_no: p.referenceNo ?? (money.kind === 'cash' && !p.voucherType ? undefined : `NX-${p.documentId?.slice(0, 8) ?? Date.now()}`),
+        cheque_date: p.referenceNo || money.kind !== 'cash' || p.voucherType ? p.date : undefined,
         user_remark: remarks ?? lines.map((l) => l.description).join(', '),
         // Row 0 is the other account (expense, capital, loan ...), row 1 the cash/bank (see resolveAccounts).
         accounts:
@@ -216,11 +218,12 @@ export function toErpDoc(type: DraftType, p: DraftPayload, ctx: ErpContext): Rec
         currency: p.currency,
         taxes_and_charges: p.taxTemplate,
         remarks,
+        ...(p.isReturn ? { is_return: 1 } : {}),
         items: lines.map((l) => ({
           item_code: l.itemCode,
           item_name: l.description.slice(0, 140),
           description: l.description,
-          qty: l.qty,
+          qty: p.isReturn ? -Math.abs(l.qty) : l.qty, // a credit note: negative quantities
           rate: l.rate,
           uom: 'Nos',
           income_account: l.account ?? account(ctx, 'sales'),
@@ -390,9 +393,10 @@ function applyChart(cache: NonNullable<ReturnType<typeof accountCache.get>>, bod
   if ('paid_from' in body) body.paid_from = fix(body.paid_from, roleOfCashBank(body.paid_from));
   if ('paid_to' in body) body.paid_to = fix(body.paid_to, roleOfCashBank(body.paid_to));
   const rows = (body.accounts as Array<Record<string, unknown>> | undefined) ?? [];
+  const contra = body.voucher_type === 'Contra Entry'; // both rows are cash/bank
   rows.forEach((row, i) => {
     // Journal Entry: first row is the expense (debit), second the cash/bank (credit) — see toErpDoc.
-    row.account = fix(row.account, i === 0 ? 'expense' : roleOfCashBank(row.account));
+    row.account = fix(row.account, i === 0 && !contra ? 'expense' : roleOfCashBank(row.account));
   });
   return changed;
 }

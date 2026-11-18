@@ -34,6 +34,16 @@ export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Langua
   const p = draft.payload as DraftPayload;
   const party = p.partyName ? `${draft.type === 'sales_invoice' || draft.type === 'payment_in' ? 'Customer' : 'Supplier'}: ${p.partyName}` : (p.remarks ?? '');
   const received = draft.type === 'journal_entry' && p.direction === 'in';
+  const contra = draft.type === 'journal_entry' && p.voucherType === 'Contra Entry';
+  if (contra) {
+    const short = (a?: string) => (a ?? '').replace(/\s+-\s+[^-]+$/, '');
+    return t(lang, 'bot.draftSummary', {
+      type: '🔁 Cash ↔ bank transfer',
+      party: [p.remarks, `From: ${p.paidFromAccount ? short(p.paidFromAccount) : p.paymentMode}`, `To: ${short(p.expenseAccount)}`].filter(Boolean).join('\n'),
+      date: p.date,
+      total: formatMoney(p.total, p.currency as Currency),
+    });
+  }
   const extra = [
     p.billNo ? `Bill no: ${p.billNo}` : undefined,
     p.invoiceRef ? `For invoice: ${p.invoiceRef}` : undefined,
@@ -51,7 +61,9 @@ export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Langua
     .join('\n');
   return (
     t(lang, 'bot.draftSummary', {
-      type: received ? '💰 Money received' : draft.type === 'journal_entry' && p.direction === 'out' ? '💸 Money paid' : TYPE_LABEL[draft.type],
+      type: p.isReturn
+        ? draft.type === 'sales_invoice' ? '↩️ Sales return (credit note)' : '↩️ Purchase return (debit note)'
+        : received ? '💰 Money received' : draft.type === 'journal_entry' && p.direction === 'out' ? '💸 Money paid' : TYPE_LABEL[draft.type],
       party: [party, extra].filter(Boolean).join('\n'),
       date: p.date,
       total: formatMoney(p.total, p.currency as Currency),
@@ -243,10 +255,10 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
     const posted = await db.draft.update({ where: { id: draftId }, data: { status: 'posted', error: null } });
     await audit(c.prisma, { tenantId, actorType: 'system', channel: 'system', action: 'draft.posted', entity: 'draft', entityId: draftId, after: { erpDoctype: doctype, erpName, total: p.total } });
 
-    if ((draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && p.partyName && p.expenseAccount) {
+    if ((draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && !p.isReturn && p.partyName && p.expenseAccount) {
       await learnVendor(c, tenantId, p.partyName, p.partyTaxId, p.expenseAccount, p.taxTemplate);
     }
-    if (draft.type === 'sales_invoice' && ctx.settings.autoSendInvoices) {
+    if (draft.type === 'sales_invoice' && !p.isReturn && ctx.settings.autoSendInvoices) {
       await c.queue.enqueue(QUEUES.outboundInvoice, { tenantId, invoiceName: erpName, draftId, source: 'nextai' }, { jobId: `inv-${tenantId}-${erpName}` });
     }
     if (draft.conversationId) {

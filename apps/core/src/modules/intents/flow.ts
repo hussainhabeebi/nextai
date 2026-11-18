@@ -9,7 +9,7 @@ import { logger } from '../../lib/logger.js';
 import type { BotContext } from '../chatwoot/context.js';
 import { say } from '../chatwoot/context.js';
 import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, summaryText, updateDraftPayload } from '../drafts/service.js';
-import { erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
+import { account, erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
 import { chooseExpenseAccount } from '../erpnext/expense-account.js';
 import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind, ledgerTarget } from '../erpnext/create-account.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
@@ -160,11 +160,19 @@ async function classify(ctx: BotContext, text: string): Promise<IntentResult> {
       today: new Date().toISOString().slice(0, 10),
     });
     await incrementUsage(ctx.c.prisma, ctx.tenant.id, { aiTokens: usage.tokens, aiCostMicros: usage.costMicros });
-    return result.confidence >= 0.5 ? result : (rule ?? { intent: 'help', confidence: 0, entities: {} });
+    return result.confidence >= 0.5 ? result : (rule ?? notUnderstood(text));
   } catch (err) {
     logger.warn({ tenantId: ctx.tenant.id, err: (err as Error).message }, 'llm classify failed');
-    return rule ?? { intent: 'help', confidence: 0, entities: {} };
+    return rule ?? notUnderstood(text);
   }
+}
+
+/** Nothing matched: show the help with the message that wasn't understood (question carries it to the reply). */
+const notUnderstood = (text: string): IntentResult => ({ intent: 'help', confidence: 0, entities: { question: text.trim().slice(0, 120) } });
+
+/** The expense/purchase ledger for a supplier bill: what this supplier was booked to before, else the best match. */
+async function billAccount(ctx: BotContext, party: string | undefined, desc: string): Promise<string> {
+  return (await learnedAccount(ctx.c, ctx.tenant.id, party)) ?? (await chooseExpenseAccount(ctx.c, ctx.tenant, [desc, party].filter(Boolean).join(' – ')));
 }
 
 const kindQuestion = (name: string) =>
@@ -229,7 +237,7 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
   const e = intent.entities;
   const today = new Date().toISOString().slice(0, 10);
   const currency = tenant.currency as Currency; // books are kept in the business currency
-  const money = ['record_expense', 'record_sale', 'payment_in', 'payment_out'].includes(intent.intent);
+  const money = ['record_expense', 'record_sale', 'payment_in', 'payment_out', 'record_purchase', 'sales_return', 'purchase_return', 'transfer'].includes(intent.intent);
   if (money && e.amount && e.currency && e.currency !== tenant.currency) {
     // "paid 20 USD …" in an INR business: posting 20 would book ₹20. Ask what was actually charged.
     const original = `${e.currency} ${e.amount}`;
@@ -249,7 +257,7 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
         lines: [{ description: desc, qty: 1, rate: e.amount, amount: e.amount }],
         total: e.amount,
         paymentMode: e.paymentMode ?? 'cash',
-        expenseAccount: (await learnedAccount(c, tenant.id, e.party)) ?? (await chooseExpenseAccount(c, tenant, [desc, e.party].filter(Boolean).join(' – '))),
+        expenseAccount: await billAccount(ctx, e.party, desc),
         remarks: desc,
         validationIssues: [],
       };
@@ -312,6 +320,67 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
       await createDraft(c, tenant, { ...base, type: intent.intent, payload, confidence: intent.confidence });
       return;
     }
+    case 'record_purchase':
+    case 'purchase_return': {
+      // A supplier bill (Purchase Invoice) or a return to the supplier (debit note: a Purchase Invoice with is_return).
+      if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
+      if (!e.party) return askFor(ctx, intent, 'party', 'supplier name');
+      const isReturn = intent.intent === 'purchase_return';
+      const desc = e.description ?? (isReturn ? 'Goods returned' : 'Purchase');
+      const payload: DraftPayload = {
+        partyName: e.party,
+        date: e.date ?? today,
+        currency,
+        lines: [{ description: desc, qty: 1, rate: e.amount, amount: e.amount }],
+        total: e.amount,
+        // Bought from a supplier: on credit (unpaid bill) unless they said how it was paid.
+        paymentMode: isReturn ? undefined : (e.paymentMode ?? 'credit'),
+        expenseAccount: await billAccount(ctx, e.party, isReturn ? `purchase ${desc}` : desc),
+        remarks: isReturn ? `Goods returned to ${e.party}${e.description ? `: ${e.description}` : ''}` : desc,
+        ...(isReturn ? { isReturn: true } : {}),
+        validationIssues: [],
+      };
+      await createDraft(c, tenant, { ...base, type: 'purchase_invoice', payload, confidence: intent.confidence });
+      return;
+    }
+    case 'sales_return': {
+      // Goods returned by a customer: an ERPNext credit note (Sales Invoice with is_return).
+      if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
+      if (!e.party) return askFor(ctx, intent, 'party', 'customer name');
+      const payload: DraftPayload = {
+        partyName: e.party,
+        date: e.date ?? today,
+        currency,
+        lines: [{ description: e.description ?? 'Goods returned', qty: 1, rate: e.amount, amount: e.amount }],
+        total: e.amount,
+        isReturn: true,
+        remarks: `Goods returned by ${e.party}${e.description ? `: ${e.description}` : ''}`,
+        validationIssues: [],
+      };
+      await createDraft(c, tenant, { ...base, type: 'sales_invoice', payload, confidence: intent.confidence });
+      return;
+    }
+    case 'transfer': {
+      // Cash deposited into / withdrawn from the bank: an ERPNext Contra Entry.
+      if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
+      const withdrawal = /withdr|bank\s*to\s*cash/i.test(e.description ?? '');
+      const erp = erpContext(tenant);
+      const payload: DraftPayload = {
+        date: e.date ?? today,
+        currency,
+        lines: [],
+        total: e.amount,
+        direction: 'out',
+        voucherType: 'Contra Entry',
+        // Row 0 (debit) receives the money; the payment mode picks the account it leaves.
+        expenseAccount: account(erp, withdrawal ? 'cash' : 'bank'),
+        paymentMode: withdrawal ? 'bank' : 'cash',
+        remarks: withdrawal ? 'Cash withdrawn from bank' : 'Cash deposited in bank',
+        validationIssues: [],
+      };
+      await createDraft(c, tenant, { ...base, type: 'journal_entry', payload, confidence: intent.confidence });
+      return;
+    }
     case 'request_report': {
       const text = await reportSummary(c, tenant, (e.report as never) ?? 'profit_and_loss');
       await say(ctx, text);
@@ -341,7 +410,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
     default: {
       const pending = await tenantDb(c.prisma, tenant.id).draft.count({ where: { status: { in: ['pending', 'needs_review'] } } });
       const footer = pending ? `\n\n${pending} item(s) waiting for approval.` : '';
-      await say(ctx, t(ctx.lang, 'bot.help') + footer);
+      // Not understood: say so, rather than just repeating the menu.
+      const lead = intent.confidence < 0.5 && e.question ? `${t(ctx.lang, 'bot.notUnderstood', { text: e.question })}\n\n` : '';
+      await say(ctx, lead + t(ctx.lang, 'bot.help') + footer);
     }
   }
 }
