@@ -61,7 +61,7 @@ describe('app OTP auth', () => {
 
   it('does not reveal unknown numbers and rejects missing tokens', async () => {
     const r = await app.inject({ method: 'POST', url: '/v1/auth/otp/request', payload: { phone: '+910000000001' } });
-    expect(r.json()).toEqual({ sent: true });
+    expect(r.json()).toEqual({ sent: true, channel: 'whatsapp' }); // same answer as a registered WhatsApp number
     expect((await app.inject({ method: 'GET', url: '/v1/me' })).statusCode).toBe(401);
   });
 

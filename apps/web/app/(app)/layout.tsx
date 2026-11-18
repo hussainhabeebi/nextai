@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Bot, Camera, CheckCircle2, CreditCard, Home, Landmark, Menu, Receipt, Settings, Users } from 'lucide-react';
+import { BarChart3, Banknote, Bot, Briefcase, Camera, CheckCircle2, CreditCard, Home, Landmark, Menu, Receipt, Settings, Sparkles, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
@@ -22,6 +22,8 @@ const isImpersonating = (token: string) => {
 function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
   const { t } = useI18n();
   const { actions, labels } = useView();
+  const { me, session } = useAuth();
+  const portal = (session?.memberships.length ?? 0) > 1 || me?.user?.role === 'tenant_accountant';
   const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
   const groups: Array<{ title?: string; items: Array<{ href: string; label: string; icon: typeof Home; badge?: number }> }> = [
     {
@@ -37,6 +39,7 @@ function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
       items: [
         { href: '/sales', label: labels.salesList, icon: Receipt },
         { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
+        { href: '/bank', label: 'Bank matching', icon: Banknote },
         { href: '/parties', label: labels.parties, icon: Users },
       ],
     },
@@ -44,6 +47,7 @@ function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
       title: 'Reports',
       items: [
         { href: '/reports/daily', label: labels.dailyReport, icon: actions.find((a) => a.kind === 'daily')!.icon },
+        { href: '/insights', label: 'Insights & analysis', icon: Sparkles },
         { href: '/reports', label: 'Financial reports', icon: BarChart3 },
         { href: '/tax', label: 'Tax centre', icon: Landmark },
         { href: '/ask', label: 'Ask your books', icon: Bot },
@@ -54,6 +58,7 @@ function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
       items: [
         { href: '/settings', label: 'Settings & team', icon: Settings },
         { href: '/billing', label: 'Billing', icon: CreditCard },
+        ...(portal ? [{ href: '/portal', label: 'All my businesses', icon: Briefcase }] : []),
       ],
     },
   ];

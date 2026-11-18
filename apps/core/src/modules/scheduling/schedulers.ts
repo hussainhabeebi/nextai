@@ -5,6 +5,7 @@ import { withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { erpContext } from '../erpnext/mappers.js';
 import { localHour, scanReminders, sendDailySummary } from '../outbound/jobs.js';
+import { sendDeadlineWarnings } from '../briefing/briefing.js';
 import { currentPeriod } from '../usage/usage.js';
 
 /** Cross-tenant fan-out uses the system context (audited by design: read-only selection of tenants). */
@@ -39,9 +40,17 @@ export function scheduleReminders(c: Container, at = new Date()) {
 export function scheduleDailySummary(c: Container, at = new Date()) {
   return forEachTenant(c, async (t) => {
     const { settings } = erpContext(t);
-    if (settings.dailySummary.enabled && t.cwBotTokenEnc && localHour(settings.timezone, at) === settings.dailySummary.hourLocal) {
+    if (settings.dailySummary.enabled && (t.cwBotTokenEnc || c.mailer.configured) && localHour(settings.timezone, at) === settings.dailySummary.hourLocal) {
       await sendDailySummary(c, t, at);
     }
+  });
+}
+
+/** schedule.deadlines — runs hourly; tax deadline warnings at each tenant's briefing hour. */
+export function scheduleDeadlines(c: Container, at = new Date()) {
+  return forEachTenant(c, async (t) => {
+    const { settings } = erpContext(t);
+    if (t.cwBotTokenEnc && localHour(settings.timezone, at) === settings.dailySummary.hourLocal) await sendDeadlineWarnings(c, t, at);
   });
 }
 
@@ -79,7 +88,9 @@ export async function healthErpnext(c: Container) {
 export const SCHEDULE_QUEUES = {
   [QUEUES.scheduleReminders]: '5 * * * *',
   [QUEUES.scheduleDailySummary]: '0 * * * *',
+  [QUEUES.scheduleDeadlines]: '2 * * * *',
   [QUEUES.usageRollup]: '15 * * * *',
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',
+  [QUEUES.reportAdminDaily]: '10 4 * * *', // 08:10 Dubai / 09:40 India
 } as const;

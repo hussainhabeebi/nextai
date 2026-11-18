@@ -1,3 +1,4 @@
+import { clearAccountCache } from '../src/modules/erpnext/mappers.js';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seed } from '../prisma/seed.js';
@@ -17,6 +18,11 @@ let staffA: string;
 beforeAll(async () => {
   await seed(c.prisma);
   A = await createTenant(c.prisma, { settings: { companyAbbr: 'AIL' } });
+  // Like a real site with India Compliance: the GST purchase template exists.
+  await (c.erp(A.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> }).create(
+    'Purchase Taxes and Charges Template',
+    { name: 'Input GST In-state - AIL', taxes: [{ charge_type: 'On Net Total', account_head: 'Input Tax CGST - AIL', rate: 9, add_deduct_tax: 'Add', category: 'Total' }] },
+  );
   B = await createTenant(c.prisma);
   app = await buildApp(c);
   tokA = await signAccess({ sub: A.owner.id, tid: A.tenant.id, role: 'owner', typ: 'app' });
@@ -67,9 +73,38 @@ describe('customer app API', () => {
     expect(listB.json().items.map((x: { id: string }) => x.id)).not.toContain(d.id);
   });
 
-  it('dashboard returns figures; settings require owner and are audited', async () => {
+  it('dashboard figures come from the ERPNext ledger (incl. entries made in ERPNext); settings require owner', async () => {
+    const erp = c.erp(A.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<unknown> };
+    const company = `Co ${A.tenant.slug}`;
+    const acc = (name: string, root_type: string, account_type = '') => erp.create('Account', { name, company, is_group: 0, root_type, account_type });
+    await acc('Cash - AIL', 'Asset', 'Cash');
+    await acc('HDFC - AIL', 'Asset', 'Bank');
+    await acc('Sales - AIL', 'Income');
+    await acc('Office Rent - AIL', 'Expense');
+    const today = new Date().toISOString().slice(0, 10);
+    let n = 0;
+    const gl = (account: string, debit: number, credit: number, posting_date = today) =>
+      erp.create('GL Entry', { name: `GL-${++n}`, company, is_cancelled: 0, account, debit, credit, posting_date });
+    await gl('HDFC - AIL', 500000, 0, '2026-01-01'); // opening, entered directly in ERPNext
+    await gl('Cash - AIL', 25000, 0, '2026-01-01');
+    await gl('HDFC - AIL', 10000, 0); // sale received today
+    await gl('Sales - AIL', 0, 10000);
+    await gl('Office Rent - AIL', 4000, 0); // rent paid today
+    await gl('HDFC - AIL', 0, 4000);
+    clearAccountCache(A.tenant.id); // the chart was cached (empty) by earlier postings in this file
     const dash = await app.inject({ method: 'GET', url: '/v1/dashboard', headers: auth(tokA) });
-    expect(dash.json()).toMatchObject({ currency: 'INR', cash: 25000, bank: 480000 });
+    expect(dash.json()).toMatchObject({ currency: 'INR', cash: 25000, bank: 506000, todaySales: 10000, todayExpenses: 4000, salesMtd: 10000, expensesMtd: 4000, profitMtd: 6000 });
+
+    const an = await app.inject({ method: 'GET', url: '/v1/analytics?period=this_month', headers: auth(tokA) });
+    expect(an.statusCode).toBe(200);
+    expect(an.json().expenseByAccount[0]).toMatchObject({ account: 'Office Rent', ledger: 'Office Rent - AIL', amount: 4000 });
+    // every figure read without errors (the fake rejects "sum(debit)"-style fields, as current Frappe does)
+    expect(an.json().errors).toEqual([]);
+    expect(an.json().balances).toMatchObject({ cash: 25000, bank: 506000 });
+    expect(an.json().trend.at(-1)).toMatchObject({ month: today.slice(0, 7), income: 10000, expenses: 4000 });
+    const lines = await app.inject({ method: 'GET', url: `/v1/analytics/entries?account=${encodeURIComponent('Office Rent - AIL')}&from=2026-01-01&to=${today}`, headers: auth(tokA) });
+    expect(lines.json().items).toHaveLength(1);
+    expect((await app.inject({ method: 'GET', url: `/v1/analytics/entries?from=2026-01-01&to=${today}`, headers: auth(tokA) })).statusCode).toBe(400);
     const denied = await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(staffA), payload: { settings: { autoPost: true } } });
     expect(denied.statusCode).toBe(403);
     const ok = await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(tokA), payload: { settings: { autoPost: true } } });
@@ -95,7 +130,7 @@ describe('customer app API', () => {
     const post = (url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: auth(tokA), payload: payload as object });
     const pur = await post('/v1/purchases', { supplier: 'Paper Co', billNo: 'PC-9', date, paymentMode: 'cash', lines: [{ description: 'printer paper', qty: 2, rate: 250 }] });
     expect(pur.statusCode).toBe(201);
-    expect(pur.json().payload.lines[0].account).toBe('Office Maintenance Expenses - AIL');
+    expect(pur.json().payload.lines[0].account).toBe('Print and Stationery - AIL');
     const exp = await post('/v1/expenses', { description: 'taxi to client', amount: 300, date });
     expect(exp.statusCode).toBe(201);
     expect(exp.json().payload.expenseAccount).toBe('Travel Expenses - AIL');
@@ -103,7 +138,7 @@ describe('customer app API', () => {
     expect(rent.json().payload.expenseAccount).toBe('Rent - AIL');
     const dep = await post('/v1/bank-entries', { kind: 'deposit', amount: 2000, date });
     expect(dep.statusCode).toBe(201);
-    expect(dep.json().payload).toMatchObject({ expenseAccount: 'Bank Accounts - AIL', paidFromAccount: 'Cash - AIL' });
+    expect(dep.json().payload).toMatchObject({ expenseAccount: 'Bank Account - AIL', paidFromAccount: 'Cash - AIL' });
     await post('/v1/payments', { direction: 'in', party: 'Acme', amount: 1200, mode: 'upi', date });
     await drain(c);
 

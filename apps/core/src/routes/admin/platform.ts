@@ -268,7 +268,7 @@ export const platformRoutes =
     app.get('/templates', { ...anyAdmin, schema: { tags: ['admin'] } }, async () => ({ items: await c.prisma.messageTemplate.findMany({ orderBy: [{ key: 'asc' }, { language: 'asc' }] }) }));
     app.put(
       '/templates',
-      { ...superOnly, schema: { tags: ['admin'], body: z.object({ key: z.string().min(2), name: z.string().min(2), language: z.enum(['en', 'ml', 'ar']), params: z.array(z.string()), category: z.string().default('UTILITY') }) } },
+      { ...superOnly, schema: { tags: ['admin'], body: z.object({ key: z.string().min(2), name: z.string().min(2), language: z.enum(['en', 'ml', 'ar']), params: z.array(z.string()), category: z.string().default('UTILITY'), approved: z.boolean().optional() }) } },
       async (req) => {
         const r = await c.prisma.messageTemplate.upsert({ where: { key_language: { key: req.body.key, language: req.body.language } }, update: req.body, create: req.body });
         await adminAudit(req, 'template.upsert', 'template', r.id, undefined, req.body);

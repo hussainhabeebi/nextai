@@ -11,6 +11,9 @@
   --brand: 14 122 107; /* #0E7A6B */
   --brand-dark: 10 94 82; /* #0A5E52 */
   --brand-light: 230 243 241; /* #E6F3F1 */
+  /* chart series (validated: CVD-separated, >= 3:1 on the card surface) */
+  --viz-income: #00876c;
+  --viz-expense: #c77800;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -20,6 +23,8 @@
     --fg: 236 242 240;
     --muted: 150 164 160;
     --line: 42 54 51;
+    --viz-income: #26a890;
+    --viz-expense: #c98410;
     color-scheme: dark;
   }
 }

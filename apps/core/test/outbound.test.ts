@@ -7,6 +7,7 @@ import { localHour, scanReminders, sendDailySummary, sendInvoice, sendReceipt, s
 import { closeShared, createTenant, drain, testContainer } from './helpers.js';
 import { cwMessage, postCw } from './webhook-helpers.js';
 import { jobHandlers } from '../src/jobs/handlers.js';
+import { sendWhatsApp } from '../src/modules/outbound/whatsapp.js';
 
 const c = testContainer();
 let app: FastifyInstance;
@@ -67,7 +68,7 @@ describe('payments', () => {
     await drain(c);
     const erp = c.erps.get(A.tenant.id)!;
     const pe = [...erp.docs.get('Payment Entry')!.values()][0]!;
-    expect(pe).toMatchObject({ payment_type: 'Receive', party_type: 'Customer', party: 'Ravi Traders', paid_amount: 2000, docstatus: 1, paid_to: 'Bank Accounts - AIL' });
+    expect(pe).toMatchObject({ payment_type: 'Receive', party_type: 'Customer', party: 'Ravi Traders', paid_amount: 2000, docstatus: 1, paid_to: 'Cash - AIL' }); // no mode mentioned → cash
     expect(await sendReceipt(c, { tenantId: A.tenant.id, paymentName: pe.name as string })).toEqual({ sent: true });
     expect(c.cws.get(A.tenant.id)!.sent.some((m) => m.template?.name === 'nextai_receipt')).toBe(true);
   });
@@ -102,11 +103,29 @@ describe('reminders', () => {
 });
 
 describe('daily summary', () => {
-  it('sends owners an evening summary', async () => {
+  it('sends owners an evening summary: plain text inside the 24h window, the template outside it', async () => {
+    const cw = c.cws.get(A.tenant.id)!;
+    // The owner wrote today (earlier tests), so plain text is allowed and always delivers.
+    const before = cw.sent.length;
+    await sendDailySummary(c, A.tenant);
+    expect(cw.sent.slice(before).some((m) => m.kind === 'text')).toBe(true);
+    expect(cw.sent.slice(before).some((m) => m.kind === 'template')).toBe(false);
+
+    await c.redis.del(`wa:window:${A.tenant.id}:${A.owner.phone}`);
+    await c.redis.del(`summary:${A.tenant.id}:${new Date().toISOString().slice(0, 10)}`);
     const vars = await sendDailySummary(c, A.tenant);
     expect(vars.pending).toBeDefined();
-    const sent = c.cws.get(A.tenant.id)!.sent.filter((m) => m.template?.name === 'nextai_daily_summary');
+    const sent = cw.sent.filter((m) => m.template?.name === 'nextai_daily_summary');
     expect(sent).toHaveLength(1);
     expect(sent[0]!.template!.params[2]).toMatch(/5,05,000/); // cash 25000 + bank 480000 from fake balances
+  });
+});
+
+describe('outbound conversation reuse', () => {
+  it('sends to the same conversation for the same phone instead of opening a new one', async () => {
+    const opts = { kind: 'notice' as const, phone: '+919800000001', name: 'Reuse test', templateKey: 'connection_test', params: [], fallbackText: 'hello' };
+    const first = await sendWhatsApp(c, A.tenant, opts);
+    const second = await sendWhatsApp(c, A.tenant, { ...opts, fallbackText: 'again' });
+    expect(second.conversationId).toBe(first.conversationId);
   });
 });

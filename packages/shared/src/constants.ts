@@ -41,13 +41,28 @@ export const INTENTS = [
   'record_sale',
   'payment_in',
   'payment_out',
+  'record_purchase',
+  'sales_return',
+  'purchase_return',
+  'transfer',
   'ask_books',
   'request_report',
   'send_reminder',
   'add_party',
+  'add_account',
+  'briefing',
+  'bank',
   'help',
 ] as const;
 export type Intent = (typeof INTENTS)[number];
+
+/** What "create an account" can mean: a party (customer/supplier) or a ledger in the chart of accounts. */
+export const ACCOUNT_KINDS = [
+  'customer', 'supplier', // parties
+  'expense', 'direct_expense', 'income', 'direct_income', 'bank', 'cash', 'capital', // ledgers in the chart of accounts
+  'liability', 'loan', 'tax', 'asset', 'fixed_asset', 'loan_advance', 'stock', 'investment',
+] as const;
+export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 export const PLAN_CODES = ['base', 'growth', 'pro'] as const;
 export type PlanCode = (typeof PLAN_CODES)[number];
@@ -74,9 +89,13 @@ export const QUEUES = {
   outboundReminder: 'outbound.reminder',
   scheduleReminders: 'schedule.reminders',
   scheduleDailySummary: 'schedule.daily_summary',
+  scheduleDeadlines: 'schedule.deadlines',
+  bankStatement: 'bank.statement',
   usageRollup: 'usage.rollup',
   billingSync: 'billing.sync',
   healthErpnext: 'health.erpnext',
+  reportAdminDaily: 'report.admin_daily',
+  tenantSetup: 'tenant.setup',
   deadLetter: 'dead-letter',
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

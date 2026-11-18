@@ -30,6 +30,7 @@ export type ErpDoc = Record<string, unknown> & { name?: string; doctype?: string
 
 export interface ListOptions {
   filters?: Array<[string, string, unknown]> | Record<string, unknown>;
+  /** Plain column names only: current Frappe rejects SQL functions written as strings ("sum(debit) as debit"). */
   fields?: string[];
   orderBy?: string;
   limit?: number;

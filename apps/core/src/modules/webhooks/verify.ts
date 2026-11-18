@@ -19,6 +19,8 @@ export function ipAllowed(ip: string, allow: string[]): boolean {
  * Chatwoot authenticity: either
  *  - `X-Chatwoot-Signature: sha256=<hex hmac(secret, "<timestamp>.<body>")>` + `X-Chatwoot-Timestamp` (signed webhooks), or
  *  - the shared secret as `?token=` on the configured Agent Bot outgoing URL.
+ * Either is enough. Newer Chatwoot versions sign with a secret *they* generate per bot, which never matches ours,
+ * so a failed signature must not hide a valid URL token.
  */
 export function verifyChatwoot(opts: {
   secret: string;
@@ -28,13 +30,13 @@ export function verifyChatwoot(opts: {
   token?: string;
   nowSec?: number;
 }): boolean {
+  if (opts.token && safeEqual(opts.token, opts.secret)) return true;
   if (opts.signature && opts.timestamp) {
     const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
     if (Math.abs(now - Number(opts.timestamp)) > 300) return false;
     const expected = 'sha256=' + createHmac('sha256', opts.secret).update(`${opts.timestamp}.`).update(opts.rawBody).digest('hex');
     return safeEqual(expected, opts.signature);
   }
-  if (opts.token) return safeEqual(opts.token, opts.secret);
   return false;
 }
 

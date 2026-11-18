@@ -7,6 +7,10 @@ import { erpContext } from '../erpnext/mappers.js';
 import { incrementUsage } from '../usage/usage.js';
 import { sendWhatsApp } from './whatsapp.js';
 import { planLimits, usageFor } from '../billing/gating.js';
+import { emailDailySummary } from '../email/reports.js';
+import { paymentLinkFor } from '../razorpay/service.js';
+import { buildBriefing } from '../briefing/briefing.js';
+import { localDate } from './time.js';
 
 type SI = { name: string; customer: string; grand_total: number; outstanding_amount: number; due_date: string; currency: string; contact_mobile?: string; docstatus: number };
 
@@ -33,6 +37,16 @@ async function customerPhone(c: Container, tenant: Tenant, customer: string, hin
   }
 }
 
+/** A payment link when the business takes online payments; a Razorpay hiccup never blocks the invoice or reminder. */
+async function linkOrNothing(c: Container, tenant: Tenant, inv: SI, phone?: string): Promise<string | undefined> {
+  try {
+    return await paymentLinkFor(c, tenant, inv, phone);
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, invoice: inv.name, err: (err as Error).message }, 'payment link failed; sending without it');
+    return undefined;
+  }
+}
+
 /** outbound.invoice: Sales Invoice PDF → customer's WhatsApp (template + document). */
 export async function sendInvoice(c: Container, job: { tenantId: string; invoiceName: string; draftId?: string }) {
   const tenant = await loadTenant(c, job.tenantId);
@@ -46,13 +60,14 @@ export async function sendInvoice(c: Container, job: { tenantId: string; invoice
   if (!phone) return { skipped: 'no_phone' };
   const pdf = await erp.downloadPdf('Sales Invoice', inv.name, erpContext(tenant).settings.invoiceTemplate);
   const cur = (inv.currency ?? tenant.currency) as Currency;
+  const payUrl = await linkOrNothing(c, tenant, inv, phone);
+  const params = [inv.customer, tenant.name, inv.name, formatMoney(inv.grand_total, cur), inv.due_date];
   await sendWhatsApp(c, tenant, {
     kind: 'invoice',
     phone,
     name: inv.customer,
-    templateKey: 'invoice',
-    params: [inv.customer, tenant.name, inv.name, formatMoney(inv.grand_total, cur), inv.due_date],
-    fallbackText: `Hi ${inv.customer}, here is invoice ${inv.name} from ${tenant.name} for ${formatMoney(inv.grand_total, cur)}, due ${inv.due_date}.`,
+    ...(payUrl ? { templateKey: 'invoice_pay', params: [...params, payUrl], alt: { templateKey: 'invoice', params } } : { templateKey: 'invoice', params }),
+    fallbackText: `Hi ${inv.customer}, here is invoice ${inv.name} from ${tenant.name} for ${formatMoney(inv.grand_total, cur)}, due ${inv.due_date}.${payUrl ? `\nPay online: ${payUrl}` : ''}`,
     file: { filename: `${inv.name}.pdf`, content: pdf, mime: 'application/pdf' },
     ref: inv.name,
   });
@@ -127,13 +142,14 @@ export async function sendReminder(
     if (!phone) continue;
     const cur = (inv.currency ?? tenant.currency) as Currency;
     const amount = formatMoney(inv.outstanding_amount, cur);
+    const payUrl = await linkOrNothing(c, tenant, inv, phone);
+    const params = [inv.customer, tenant.name, amount, inv.name, inv.due_date];
     await sendWhatsApp(c, tenant, {
       kind: 'reminder',
       phone,
       name: inv.customer,
-      templateKey: 'reminder',
-      params: [inv.customer, tenant.name, amount, inv.name, inv.due_date],
-      fallbackText: t(lang, 'bot.reminder', { party: inv.customer, amount, ref: inv.name }),
+      ...(payUrl ? { templateKey: 'reminder_pay', params: [...params, payUrl], alt: { templateKey: 'reminder', params } } : { templateKey: 'reminder', params }),
+      fallbackText: t(lang, 'bot.reminder', { party: inv.customer, amount, ref: inv.name }) + (payUrl ? `\nPay online: ${payUrl}` : ''),
       ref: inv.name,
     });
     sent++;
@@ -142,13 +158,7 @@ export async function sendReminder(
   return { sent };
 }
 
-/** Hour of day in the tenant's timezone. */
-export function localHour(timezone: string, at = new Date()): number {
-  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', hourCycle: 'h23' }).format(at));
-}
-export function localDate(timezone: string, at = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
-}
+export { localDate, localHour } from './time.js';
 
 const addDays = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
 
@@ -173,8 +183,8 @@ export async function scanReminders(c: Container, tenant: Tenant, at = new Date(
   return invoices.length;
 }
 
-/** Evening WhatsApp summary to owners. Figures come from NextAi-posted drafts + ERPNext balances. */
-export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
+/** Today's figures for the summary. Figures come from NextAi-posted drafts + ERPNext balances. */
+export async function summaryFigures(c: Container, tenant: Tenant, at = new Date()) {
   const { settings, company } = erpContext(tenant);
   const day = localDate(settings.timezone, at);
   const db = tenantDb(c.prisma, tenant.id);
@@ -182,10 +192,10 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
   const today = posted.filter((d) => (d.payload as DraftPayload).date === day);
   const sum = (types: string[]) => today.filter((d) => types.includes(d.type)).reduce((s, d) => s + (d.payload as DraftPayload).total, 0);
   const cur = tenant.currency as Currency;
-  let cash = 0;
+  let cash: string = 'not available right now'; // never a made-up ₹0.00 when ERPNext can't be read
   try {
     const b = await c.erp(tenant).getBalances(company);
-    cash = b.cash + b.bank;
+    cash = formatMoney(b.cash + b.bank, cur);
   } catch (err) {
     logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'balances unavailable for summary');
   }
@@ -193,9 +203,23 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
   const vars = {
     sales: formatMoney(sum(['sales_invoice']), cur),
     expenses: formatMoney(sum(['purchase_invoice', 'journal_entry']), cur),
-    cash: formatMoney(cash, cur),
+    cash,
     pending: String(pending),
   };
+  return { day, vars };
+}
+
+/** Daily briefing to owners: email (Resend) and WhatsApp (Chatwoot). Approved template outside the 24h window. */
+export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
+  const b = await buildBriefing(c, tenant, at);
+  const db = tenantDb(c.prisma, tenant.id);
+  // Email (Resend) first so a WhatsApp failure never blocks it, and vice versa.
+  try {
+    await emailDailySummary(c, tenant, b.day, b.templateVars, { rows: b.rows });
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'summary email failed');
+  }
+  if (!tenant.cwBotTokenEnc) return b.templateVars;
   const owners = await db.user.findMany({ where: { role: 'owner', status: 'active', phone: { not: null } } });
   for (const o of owners) {
     await sendWhatsApp(c, tenant, {
@@ -203,10 +227,10 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
       phone: o.phone!,
       name: o.name,
       templateKey: 'daily_summary',
-      params: [vars.sales, vars.expenses, vars.cash, vars.pending],
-      fallbackText: t((o.language ?? tenant.language) as Language, 'bot.dailySummary', vars),
-      ref: `summary-${day}`,
+      params: [b.templateVars.sales, b.templateVars.expenses, b.templateVars.cash, b.templateVars.pending],
+      fallbackText: b.text,
+      ref: `summary-${b.day}`,
     });
   }
-  return vars;
+  return b.templateVars;
 }

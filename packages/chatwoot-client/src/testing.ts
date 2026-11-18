@@ -42,8 +42,16 @@ export class FakeChatwootClient implements ChatwootClient {
     }
     return { contactId: id, sourceId: phone.replace(/^\+/, '') };
   }
-  async createConversation() {
-    return { conversationId: ++this.seq };
+  /** contactId → conversation ids, oldest first */
+  conversations = new Map<number, number[]>();
+  async createConversation(contactId?: number) {
+    const conversationId = ++this.seq;
+    if (contactId !== undefined) this.conversations.set(contactId, [...(this.conversations.get(contactId) ?? []), conversationId]);
+    return { conversationId };
+  }
+  async findLatestConversation(contactId: number) {
+    const id = this.conversations.get(contactId)?.at(-1);
+    return id === undefined ? null : { conversationId: id, status: 'open' };
   }
   async addLabels(conversationId: number, labels: string[]) {
     this.labels.set(conversationId, [...(this.labels.get(conversationId) ?? []), ...labels]);

@@ -1,4 +1,5 @@
 import type { ChatwootWebhook } from '@nextai/chatwoot-client';
+import { markCustomerWindow } from './diagnostics.js';
 import { QUEUES, normalizePhone, t, type Language } from '@nextai/shared';
 import type { Tenant } from '@prisma/client';
 import { env } from '../../config/env.js';
@@ -16,6 +17,7 @@ const EXT: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
   'application/pdf': 'pdf',
+  'text/csv': 'csv',
   'audio/ogg': 'ogg',
   'audio/mpeg': 'mp3',
   'audio/mp4': 'm4a',
@@ -32,6 +34,7 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
   const lang = (tenant.language as Language) ?? 'en';
   const rawPhone = evt.sender?.phone_number ?? evt.conversation?.contact_inbox?.source_id;
   const phone = rawPhone ? normalizePhone(rawPhone, tenant.country) : undefined;
+  if (phone) await markCustomerWindow(c.redis, tenant.id, phone); // free-text replies allowed for 24h
   const db = tenantDb(c.prisma, tenant.id);
   const user = phone ? await db.user.findFirst({ where: { tenantId: tenant.id, phone, status: { not: 'disabled' } } }) : null;
 
@@ -62,16 +65,29 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
   }
   const hasDocs = (evt.attachments ?? []).some((a) => a.file_type !== 'audio');
   if (hasDocs && (await usageFor(c, tenant, 'ocrPagesPerMonth')) >= limits.ocrPagesPerMonth) {
-    await cw.sendText(conversationId, t(ulang, 'bot.planLimit', { what: 'bill scanning', link: upgrade }));
+    await cw.sendText(conversationId, t(ulang, 'bot.planLimit', { what: 'bill entries', link: upgrade }));
     return 'billing_blocked';
   }
 
   const ctx: BotContext = { c, tenant, user, conversationId, lang: ulang };
   const attachments = evt.attachments ?? [];
   if (attachments.length > 0) {
+    let statements = 0;
     for (const a of attachments) {
       const file = await cw.downloadAttachment(a.data_url);
       const isAudio = a.file_type === 'audio' || file.mime.startsWith('audio/');
+      // A bank statement: CSV, or a PDF/photo the caption or file name calls a statement.
+      const fileName = decodeURIComponent(a.data_url.split('?')[0]!.split('/').pop() ?? '');
+      const isCsv = /csv|comma-separated/i.test(file.mime) || /\.csv$/i.test(fileName) || a.extension === 'csv';
+      if (!isAudio && (isCsv || (/pdf|image\//.test(file.mime) && /statement|stmt|bank/i.test(`${evt.content ?? ''} ${fileName}`)))) {
+        const mime = isCsv ? 'text/csv' : file.mime;
+        const key = tenantKey(tenant.id, 'statements', new Date().toISOString().slice(0, 7), `${sha256(file.content)}.${EXT[mime] ?? 'bin'}`);
+        await c.storage.put(tenant.id, key, file.content, mime);
+        await c.queue.enqueue(QUEUES.bankStatement, { tenantId: tenant.id, r2Key: key, mime, name: fileName, conversationId, userId: user.id });
+        await cw.sendText(conversationId, 'Got your bank statement 👍 Matching it with your books…');
+        statements++;
+        continue;
+      }
       const hash = sha256(file.content);
       const key = tenantKey(tenant.id, isAudio ? 'voice' : 'docs', new Date().toISOString().slice(0, 7), `${hash}.${EXT[file.mime] ?? 'bin'}`);
       if (isAudio) {
@@ -92,7 +108,8 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
       await c.queue.enqueue(QUEUES.ocr, { tenantId: tenant.id, documentId: doc.id, conversationId, userId: user.id }, { jobId: `ocr-${doc.id}` });
       await cw.sendText(conversationId, t(ulang, 'bot.received'));
     }
-    if (evt.content?.trim()) await handleText(ctx, evt.content); // caption, e.g. "paid by card"
+    // A caption is an instruction for a bill ("paid by card"); for a statement it just names the file.
+    if (evt.content?.trim() && statements < attachments.length) await handleText(ctx, evt.content);
     return 'attachments_queued';
   }
 
