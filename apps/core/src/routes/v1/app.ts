@@ -9,7 +9,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { audit } from '../../modules/audit/audit.js';
 import { cancelDraft, confirmDraft, createDraft, getDraft, updateDraftPayload } from '../../modules/drafts/service.js';
 import { PERIODS, buildAnalytics, dayTotals, fetchAnalytics, ledgerEntries, periodsFor } from '../../modules/reports/analytics.js';
-import { erpContext } from '../../modules/erpnext/mappers.js';
+import { account, erpContext, guessExpenseAccount } from '../../modules/erpnext/mappers.js';
 import { booksContext, runReport } from '../../modules/reports/reports.js';
 import { incrementUsage } from '../../modules/usage/usage.js';
 import { tenantKey } from '../../storage/storage.js';
@@ -233,6 +233,370 @@ export const appRoutes =
       },
     );
 
+    // ---------------- Quick sales: clinic patient bill / pharmacy counter sale ----------------
+    // A sales invoice, plus a receipt for the same amount when paid at the counter.
+    app.post(
+      '/quick-sales',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            kind: z.enum(['patient_bill', 'counter_sale']),
+            party: z.string().max(140).optional(),
+            phone: z.string().max(20).optional(),
+            doctor: z.string().max(140).optional(),
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            lines: z
+              .array(
+                z.object({
+                  description: z.string().min(1).max(300),
+                  qty: z.number().positive(),
+                  rate: z.number().nonnegative(),
+                  discountPct: z.number().min(0).max(100).optional(),
+                  batch: z.string().max(60).optional(),
+                  expiry: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+                }),
+              )
+              .min(1),
+            /** Whole-bill discount (amount), spread over the lines */
+            discount: z.number().min(0).default(0),
+            paymentMode: z.enum(['cash', 'upi', 'card', 'bank', 'credit']).default('cash'),
+            reference: z.string().max(140).optional(),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const gross = b.lines.reduce((s, l) => s + l.qty * l.rate * (1 - (l.discountPct ?? 0) / 100), 0);
+        if (b.discount >= gross && gross > 0) throw badRequest('Discount cannot be the whole bill');
+        const billPct = gross > 0 ? b.discount / gross : 0;
+        const lines = b.lines.map((l) => {
+          const rate = r2(l.rate * (1 - (l.discountPct ?? 0) / 100) * (1 - billPct));
+          const extra = [
+            l.batch && `Batch ${l.batch}`,
+            l.expiry && `Exp ${l.expiry.slice(5)}/${l.expiry.slice(2, 4)}`,
+            rate !== l.rate && `MRP ${l.rate}`,
+          ].filter(Boolean);
+          const description = extra.length ? `${l.description} · ${extra.join(' · ')}` : l.description;
+          return { description, qty: l.qty, rate, amount: r2(l.qty * rate) };
+        });
+        const total = r2(lines.reduce((s, l) => s + l.amount, 0));
+        const date = b.date ?? today();
+        const party = b.party?.trim() || (b.kind === 'patient_bill' ? 'Walk-in Patient' : 'Walk-in Customer');
+        const label = b.kind === 'patient_bill' ? 'Patient bill' : 'Counter sale';
+        const remarks = [label, b.doctor && `Dr ${b.doctor.replace(/^dr\.?\s*/i, '')}`, b.discount > 0 && `Discount ${b.discount}`]
+          .filter(Boolean)
+          .join(' · ');
+        const invoice = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'sales_invoice',
+          payload: {
+            partyName: party,
+            partyPhone: b.phone ? normalizePhone(b.phone, t.country) : undefined,
+            date,
+            currency: t.currency as Currency,
+            lines,
+            total,
+            remarks,
+            validationIssues: [],
+          },
+          actor: actorOf(req),
+        });
+        const posted = await confirmDraft(c, t, invoice.id, actorOf(req));
+        let payment = null;
+        if (b.paymentMode !== 'credit' && total > 0) {
+          const pay = await createDraft(c, t, {
+            userId: req.user!.sub,
+            type: 'payment_in',
+            payload: {
+              partyName: party,
+              date,
+              currency: t.currency as Currency,
+              lines: [],
+              total,
+              paymentMode: b.paymentMode,
+              referenceNo: b.reference,
+              remarks: `${label} paid at counter`,
+              validationIssues: [],
+            },
+            actor: actorOf(req),
+          });
+          payment = await confirmDraft(c, t, pay.id, actorOf(req));
+        }
+        return reply.code(201).send({ invoice: posted, payment, total });
+      },
+    );
+
+    // ---------------- Purchase bills (manual entry) ----------------
+    const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+    app.post(
+      '/purchases',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            supplier: z.string().min(1).max(140),
+            billNo: z.string().max(140).optional(),
+            date: isoDay.optional(),
+            dueDate: isoDay.optional(),
+            lines: z
+              .array(
+                z.object({
+                  description: z.string().min(1).max(500),
+                  qty: z.number().positive(),
+                  rate: z.number().nonnegative(),
+                }),
+              )
+              .min(1),
+            paymentMode: z.enum(['credit', 'cash', 'bank', 'upi', 'card']).default('credit'),
+            remarks: z.string().max(500).optional(),
+            /** "stock": goods for resale (pharmacy) → cost of goods sold instead of guessing an expense head */
+            itemsAccount: z.enum(['auto', 'stock']).default('auto'),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const ctx = erpContext(t);
+        const lines = b.lines.map((l) => ({
+          ...l,
+          amount: Math.round(l.qty * l.rate * 100) / 100,
+          account:
+            b.itemsAccount === 'stock'
+              ? (ctx.settings.accounts.stock_purchase ?? account(ctx, 'Cost of Goods Sold'))
+              : guessExpenseAccount(ctx, l.description),
+        }));
+        const payload: DraftPayload = {
+          partyName: b.supplier,
+          billNo: b.billNo,
+          date: b.date ?? today(),
+          dueDate: b.dueDate,
+          currency: t.currency as Currency,
+          lines,
+          total: lines.reduce((s, l) => s + l.amount, 0),
+          paymentMode: b.paymentMode,
+          remarks: b.remarks,
+          validationIssues: [],
+        };
+        const draft = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'purchase_invoice',
+          payload,
+          actor: actorOf(req),
+        });
+        return reply.code(201).send(await confirmDraft(c, t, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Expenses (no supplier bill → journal entry) ----------------
+    const EXPENSE_CATEGORIES: Record<string, string> = {
+      auto: '',
+      travel: 'Travel Expenses',
+      food: 'Entertainment Expenses',
+      rent: 'Rent',
+      utilities: 'Utility Expenses',
+      salary: 'Salary',
+      office: 'Office Maintenance Expenses',
+      postage: 'Postal Expenses',
+      marketing: 'Marketing Expenses',
+      misc: 'Miscellaneous Expenses',
+      /** Clinic view: visiting doctor / consultant payouts. Override with settings.accounts.doctor_fees. */
+      doctor_fees: 'Salary',
+    };
+    app.get('/expense-categories', { schema: { tags: ['app'] } }, async () => ({
+      items: Object.entries(EXPENSE_CATEGORIES).map(([key, name]) => ({
+        key,
+        name: name || 'Auto-detect from description',
+      })),
+    }));
+    app.post(
+      '/expenses',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            description: z.string().min(1).max(500),
+            amount: z.number().positive(),
+            category: z.enum(Object.keys(EXPENSE_CATEGORIES) as [string, ...string[]]).default('auto'),
+            paymentMode: z.enum(['cash', 'bank', 'upi', 'card']).default('cash'),
+            date: isoDay.optional(),
+            reference: z.string().max(140).optional(),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const ctx = erpContext(t);
+        const cat = EXPENSE_CATEGORIES[b.category];
+        const expenseAccount =
+          b.category === 'doctor_fees' && ctx.settings.accounts.doctor_fees
+            ? ctx.settings.accounts.doctor_fees
+            : cat
+              ? account(ctx, cat)
+              : guessExpenseAccount(ctx, b.description);
+        const payload: DraftPayload = {
+          date: b.date ?? today(),
+          currency: t.currency as Currency,
+          lines: [{ description: b.description, qty: 1, rate: b.amount, amount: b.amount }],
+          total: b.amount,
+          paymentMode: b.paymentMode,
+          expenseAccount,
+          referenceNo: b.reference,
+          remarks: b.description,
+          validationIssues: [],
+        };
+        const draft = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'journal_entry',
+          payload,
+          actor: actorOf(req),
+        });
+        return reply.code(201).send(await confirmDraft(c, t, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Bank entries (cash deposit / withdrawal / bank charges) ----------------
+    app.post(
+      '/bank-entries',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            kind: z.enum(['deposit', 'withdrawal', 'charges']),
+            amount: z.number().positive(),
+            date: isoDay.optional(),
+            reference: z.string().max(140).optional(),
+            remarks: z.string().max(500).optional(),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const ctx = erpContext(t);
+        const cash = account(ctx, 'cash');
+        const bank = account(ctx, 'bank');
+        // journal_entry maps expenseAccount → debit, paidFromAccount → credit
+        const [debit, credit, label] =
+          b.kind === 'deposit'
+            ? [bank, cash, 'Cash deposited to bank']
+            : b.kind === 'withdrawal'
+              ? [cash, bank, 'Cash withdrawn from bank']
+              : [account(ctx, 'Bank Charges'), bank, 'Bank charges'];
+        const remarks = [label, b.remarks].filter(Boolean).join(' — ');
+        const payload: DraftPayload = {
+          date: b.date ?? today(),
+          currency: t.currency as Currency,
+          lines: [{ description: remarks, qty: 1, rate: b.amount, amount: b.amount }],
+          total: b.amount,
+          paymentMode: 'bank',
+          expenseAccount: debit,
+          paidFromAccount: credit,
+          referenceNo: b.reference,
+          remarks,
+          validationIssues: [],
+        };
+        const draft = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'journal_entry',
+          payload,
+          actor: actorOf(req),
+        });
+        return reply.code(201).send(await confirmDraft(c, t, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Daily report ----------------
+    app.get(
+      '/daily-report',
+      { ...perTenant, schema: { tags: ['app'], querystring: z.object({ date: isoDay.optional() }) } },
+      async (req) => {
+        const t = req.tenant!;
+        const date = req.query.date ?? today();
+        const drafts = await req.db!.draft.findMany({
+          where: {
+            status: { in: ['confirmed', 'posting', 'posted'] },
+            payload: { path: ['date'], equals: date },
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        const cashAcc = account(erpContext(t), 'cash');
+        const bankAcc = account(erpContext(t), 'bank');
+        const totals = {
+          sales: 0,
+          purchases: 0,
+          expenses: 0,
+          bank: 0,
+          receipts: 0,
+          payments: 0,
+          cashIn: 0,
+          cashOut: 0,
+        };
+        const entries = drafts.map((d) => {
+          const p = d.payload as DraftPayload;
+          const isContra =
+            d.type === 'journal_entry' &&
+            [cashAcc, bankAcc].includes(p.expenseAccount ?? '') &&
+            [cashAcc, bankAcc].includes(p.paidFromAccount ?? '');
+          const isBank =
+            d.type === 'journal_entry' &&
+            (isContra || (p.paidFromAccount === bankAcc && /bank charges/i.test(p.expenseAccount ?? '')));
+          const kind =
+            d.type === 'sales_invoice'
+              ? 'sale'
+              : d.type === 'purchase_invoice'
+                ? 'purchase'
+                : d.type === 'payment_in'
+                  ? 'receipt'
+                  : d.type === 'payment_out'
+                    ? 'payment'
+                    : isBank
+                      ? 'bank'
+                      : 'expense';
+          const paidNow = p.paymentMode && !['credit', 'unknown'].includes(p.paymentMode);
+          if (kind === 'sale') totals.sales += p.total;
+          if (kind === 'purchase') totals.purchases += p.total;
+          if (kind === 'expense') totals.expenses += p.total;
+          if (kind === 'bank') totals.bank += p.total;
+          if (kind === 'receipt') totals.receipts += p.total;
+          if (kind === 'payment') totals.payments += p.total;
+          if (kind === 'receipt') totals.cashIn += p.total;
+          if (
+            kind === 'payment' ||
+            kind === 'expense' ||
+            (kind === 'purchase' && paidNow) ||
+            (kind === 'bank' && !isContra)
+          )
+            totals.cashOut += p.total;
+          return {
+            id: d.id,
+            kind,
+            party: p.partyName ?? null,
+            description: p.remarks ?? p.lines.map((l) => l.description).join(', '),
+            amount: p.total,
+            mode: p.paymentMode ?? null,
+            reference: p.referenceNo ?? p.billNo ?? null,
+            erpName: d.erpName,
+            status: d.status,
+            createdAt: d.createdAt,
+          };
+        });
+        const round = (n: number) => Math.round(n * 100) / 100;
+        return {
+          date,
+          currency: t.currency as Currency,
+          totals: Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, round(v)])),
+          netCashFlow: round(totals.cashIn - totals.cashOut),
+          grossProfit: round(totals.sales - totals.purchases - totals.expenses),
+          entries,
+        };
+      },
+    );
+
     // ---------------- Parties ----------------
     app.get('/parties', { ...perTenant, schema: { tags: ['app'], querystring: z.object({ kind: z.enum(['customer', 'supplier']).default('customer'), q: z.string().max(100).optional() }) } }, async (req) => {
       const t = req.tenant!;
@@ -319,7 +683,7 @@ export const appRoutes =
       name: z.string().min(2).max(200).optional(),
       language: z.enum(['en', 'ml', 'ar']).optional(),
       settings: tenantSettingsSchema
-        .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true, taxRegime: true, taxCalendar: true, paymentLinks: true })
+        .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true, taxRegime: true, taxCalendar: true, paymentLinks: true, appView: true, appStyle: true })
         .partial()
         .optional(),
     });

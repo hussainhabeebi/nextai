@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  APP_STYLES,
+  APP_VIEWS,
   COUNTRIES,
   CURRENCIES,
   DRAFT_STATUSES,
@@ -64,6 +66,10 @@ export const tenantSettingsSchema = z.object({
     .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
     .default({}),
   featureFlags: z.record(z.boolean()).default({}),
+  /** Industry layout of the customer app: entry menus, labels and screens. */
+  appView: z.enum(APP_VIEWS).default('general'),
+  /** Colour theme of the customer app. */
+  appStyle: z.enum(APP_STYLES).default('teal'),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 

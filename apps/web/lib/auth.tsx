@@ -2,19 +2,21 @@
 
 import { useRouter } from 'next/navigation';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { AppStyle, AppView } from '@nextai/shared';
 import { api, type Session } from './api';
 import { syncQueue } from './offline-queue';
 
 interface Me {
   user: { id: string; name: string; role: string; language: string } | null;
-  tenant: { id: string; name: string; slug: string; country: 'IN' | 'AE'; currency: 'INR' | 'AED'; language: string; status: string };
+  tenant: { id: string; name: string; slug: string; country: 'IN' | 'AE'; currency: 'INR' | 'AED'; language: string; status: string; appView?: AppView; appStyle?: AppStyle };
 }
 
-const Ctx = createContext<{ session: Session | null; me: Me | null; switchTenant: (id: string) => Promise<void>; logout: () => Promise<void> }>({
+const Ctx = createContext<{ session: Session | null; me: Me | null; switchTenant: (id: string) => Promise<void>; logout: () => Promise<void>; reloadMe: () => Promise<void> }>({
   session: null,
   me: null,
   switchTenant: async () => {},
   logout: async () => {},
+  reloadMe: async () => {},
 });
 
 /** Guards the (app) group: restores the session from the refresh cookie or redirects to /login. */
@@ -44,9 +46,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setReady(true);
     });
   }, [router]);
+  const reloadMe = async () => {
+    setMe(await api.get<Me>('/v1/me'));
+  };
   useEffect(() => {
     if (!session) return;
-    void api.get<Me>('/v1/me').then(setMe);
+    void reloadMe();
     void syncQueue(session.tenantId);
     const onOnline = () => void syncQueue(session.tenantId);
     window.addEventListener('online', onOnline);
@@ -64,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.replace('/login');
   };
   if (!ready || !session) return null;
-  return <Ctx.Provider value={{ session, me, switchTenant, logout }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ session, me, switchTenant, logout, reloadMe }}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

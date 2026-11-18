@@ -8,6 +8,9 @@
   --fg: 17 24 22;
   --muted: 100 112 108;
   --line: 226 232 230;
+  --brand: 14 122 107; /* #0E7A6B */
+  --brand-dark: 10 94 82; /* #0A5E52 */
+  --brand-light: 230 243 241; /* #E6F3F1 */
   /* chart series (validated: CVD-separated, >= 3:1 on the card surface) */
   --viz-income: #00876c;
   --viz-expense: #c77800;

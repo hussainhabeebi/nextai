@@ -17,6 +17,11 @@ export type UserRole = (typeof USER_ROLES)[number];
 export const PLATFORM_ROLES = ['super_admin', 'reviewer', 'support'] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 
+export const APP_VIEWS = ['general', 'clinic', 'pharmacy'] as const;
+export type AppView = (typeof APP_VIEWS)[number];
+export const APP_STYLES = ['teal', 'blue', 'green', 'violet', 'rose', 'slate'] as const;
+export type AppStyle = (typeof APP_STYLES)[number];
+
 export const DRAFT_TYPES = ['purchase_invoice', 'journal_entry', 'sales_invoice', 'payment_in', 'payment_out'] as const;
 export type DraftType = (typeof DRAFT_TYPES)[number];
 
