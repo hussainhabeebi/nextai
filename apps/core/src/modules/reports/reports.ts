@@ -45,29 +45,6 @@ export function totalOutstanding(r: ReportResult): number {
   return (r.result as Row[]).filter((x) => x && typeof x === 'object' && x.party).reduce((s, x) => s + num(x.outstanding), 0);
 }
 
-/** Pick the "total" row value for a P&L-style report. */
-function pnlNet(r: ReportResult): number {
-  const rows = r.result as Row[];
-  const net = rows.find((x) => x && typeof x === 'object' && /profit|loss/i.test(String(x.account_name ?? x.account ?? '')) && x.total !== undefined);
-  return num(net?.total);
-}
-
-export async function reportSummary(c: Container, tenant: Tenant, key: ReportKey): Promise<string> {
-  const cur = tenant.currency as Currency;
-  try {
-    const r = await runReport(c, tenant, key);
-    if (key === 'receivables' || key === 'payables') {
-      const rows = (r.result as Row[]).filter((x) => x?.party).sort((a, b) => num(b.outstanding) - num(a.outstanding));
-      const top = rows.slice(0, 5).map((x) => `• ${x.party}: ${formatMoney(num(x.outstanding), cur)}`).join('\n');
-      return `📊 ${REPORT_NAMES[key]}\nTotal: ${formatMoney(totalOutstanding(r), cur)}\n${top || 'Nothing outstanding 🎉'}`;
-    }
-    if (key === 'profit_and_loss') return `📊 Profit & Loss (FY to date)\nNet: ${formatMoney(pnlNet(r), cur)}\nFull report: open the NextAi app → Reports.`;
-    return `📊 ${REPORT_NAMES[key]} is ready in the NextAi app → Reports.`;
-  } catch {
-    return 'Your books are busy right now. Please try again in a few minutes.';
-  }
-}
-
 /** Compact facts for "ask your books" (LLM answers ONLY from this). */
 export async function booksContext(c: Container, tenant: Tenant): Promise<string> {
   const cur = tenant.currency as Currency;

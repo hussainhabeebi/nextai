@@ -12,6 +12,7 @@ import { erpContext } from '../erpnext/mappers.js';
 import { sendWhatsApp } from '../outbound/whatsapp.js';
 import { localDate } from '../outbound/time.js';
 import { dayTotals } from '../reports/analytics.js';
+import { moneyBalances } from '../reports/answers.js';
 import { daysBetween, upcomingDeadlines, type Deadline } from './deadlines.js';
 
 type Overdue = { name: string; customer: string; outstanding_amount: number; due_date: string };
@@ -20,6 +21,20 @@ export interface Blockers {
   pending: number;
   erpDrafts: number;
   noTaxId: number;
+}
+
+/** One line per customer: their overdue invoices added up, oldest due date kept; biggest first. */
+function byCustomer(rows: Overdue[]): Overdue[] {
+  const g = new Map<string, Overdue>();
+  for (const r of rows) {
+    const x = g.get(r.customer);
+    if (!x) g.set(r.customer, { ...r, outstanding_amount: Number(r.outstanding_amount) || 0 });
+    else {
+      x.outstanding_amount += Number(r.outstanding_amount) || 0;
+      if (r.due_date < x.due_date) x.due_date = r.due_date;
+    }
+  }
+  return [...g.values()].sort((a, b) => b.outstanding_amount - a.outstanding_amount);
 }
 
 const short = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -78,14 +93,15 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
 
   const [totals, balances, overdue, pending, bankToCheck] = await Promise.all([
     dayTotals(c, tenant, day).catch(() => null),
-    erp.getBalances(company).catch(() => null),
+    moneyBalances(c, tenant, day).catch(() => erp.getBalances(company)).catch(() => null),
     erp
       .list<Overdue>('Sales Invoice', {
         filters: [['docstatus', '=', 1], ['outstanding_amount', '>', 0], ['due_date', '<', day]],
         fields: ['name', 'customer', 'outstanding_amount', 'due_date'],
         orderBy: 'outstanding_amount desc',
-        limit: 3,
+        limit: 100,
       })
+      .then(byCustomer)
       .catch(() => [] as Overdue[]),
     db.draft.count({ where: { status: { in: ['pending', 'needs_review'] } } }),
     db.bankLine.count({ where: { OR: [{ status: 'unmatched' }, { status: 'suggested', draftId: null }] } }),
@@ -97,16 +113,20 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
   const sales = totals ? m(totals.income) : 'not available';
   const expenses = totals ? m(totals.expenses) : 'not available';
   const cash = balances ? m(balances.cash + balances.bank) : 'not available right now';
-  const lines = [`☀️ ${tenant.name} · ${short(day)}`, `Sales ${sales} · Expenses ${expenses} today`, `Cash & bank: ${cash}`];
+  const lines = [`☀️ *${tenant.name}* · ${short(day)}`, '', `📈 Sales today: *${sales}*`, `💸 Expenses today: *${expenses}*`, `🏦 Cash & bank: *${cash}*`];
   if (overdue.length) {
-    lines.push(`💸 To collect: ${overdue.map((o) => `${o.customer} ${m(o.outstanding_amount)} (${daysBetween(o.due_date, day)} days late)`).join(' · ')}`);
+    lines.push('', `*To collect* (${m(overdue.reduce((s, o) => s + o.outstanding_amount, 0))} overdue)`);
+    for (const o of overdue.slice(0, 3)) lines.push(`• ${o.customer} — ${m(o.outstanding_amount)} (${daysBetween(o.due_date, day)} days late)`);
+    if (overdue.length > 3) lines.push(`  …and ${overdue.length - 3} more`);
     lines.push(`Reply "remind ${overdue[0]!.customer}" to send a reminder.`);
   }
-  for (const d of deadlines.slice(0, 3)) {
-    lines.push(`📅 ${d.what}: due ${short(d.due)} (${inDays(daysBetween(day, d.due))})`);
+  if (deadlines.length) {
+    lines.push('', '*Tax deadlines*');
+    for (const d of deadlines.slice(0, 3)) lines.push(`📅 ${d.what}: due ${short(d.due)} (${inDays(daysBetween(day, d.due))})`);
   }
   const block = blockers && blockerText(blockers, tenant.country);
-  if (block) lines.push(`   ${block}`);
+  if (block) lines.push(`⚠️ ${block}`);
+  if (pending || bankToCheck) lines.push('');
   if (pending) lines.push(`⏳ ${pending} item${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your approval`);
   if (bankToCheck) lines.push(`🏦 ${bankToCheck} bank line${bankToCheck === 1 ? '' : 's'} to check: reply "bank"`);
 
@@ -115,7 +135,7 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
     { label: 'Expenses today', value: expenses },
     { label: 'Cash & bank', value: cash },
     { label: 'Waiting for your approval', value: String(pending) },
-    ...(overdue.length ? [{ label: 'To collect', value: overdue.map((o) => `${o.customer} ${m(o.outstanding_amount)}`).join(', ') }] : []),
+    ...(overdue.length ? [{ label: 'To collect', value: overdue.slice(0, 3).map((o) => `${o.customer} ${m(o.outstanding_amount)}`).join(', ') }] : []),
     ...deadlines.slice(0, 3).map((d) => ({ label: d.what, value: `due ${short(d.due)}` })),
     ...(bankToCheck ? [{ label: 'Bank lines to check', value: String(bankToCheck) }] : []),
   ];

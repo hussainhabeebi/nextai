@@ -168,7 +168,9 @@ Intents (pick exactly one):
 - bank: they want to go through unmatched bank transactions. "bank", "check bank", "reconcile"
 - briefing: they want today's overview. "briefing", "summary", "how's business today", "good morning", "innathe kanakku"
 - ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
-- request_report: P&L, balance sheet, receivables, payables, ledger, cash flow
+- request_report: P&L, balance sheet, receivables, payables, ledger, cash flow ("report p&l last month", "balance sheet")
+- ask_books also covers: "how much sales is today", "sales last month", "expenses this week", "profit this year", "cash balance",
+  "Ravi balance", "payments received yesterday", "top customers", "unpaid invoices", "gst due" (a question, never a transaction or briefing)
 - send_reminder: remind a customer to pay. "remind Ravi", "Ravi ne remind cheyyu"
 - help: greetings or when nothing above fits.
 
@@ -177,7 +179,7 @@ description = what the money was for (say "capital", "drawings" or "loan" when i
 kind (add_party / add_account) = one of customer, supplier, expense, direct_expense, income, direct_income, bank, cash, capital, liability, loan,
 tax, asset, fixed_asset, loan_advance, stock, investment (empty if not said); accountName (add_account) = the ledger name;
 group (add_account) = the account group if they name one ("under Capital Account" → Capital Account), else empty;
-question (ask_books) = the question as written. Use an empty string (0 for amount) for entities that do not apply.
+question (ask_books, request_report) = the message as written. Use an empty string (0 for amount) for entities that do not apply.
 Prefer a concrete intent over help whenever the meaning is reasonably clear; lower the confidence when unsure.`;
 
 export class AnthropicLlm implements LlmProvider {
@@ -227,6 +229,7 @@ export class AnthropicLlm implements LlmProvider {
       max_tokens: 4000,
       output_config: { effort: 'low' },
       system: `You answer questions about a small business's books using only the data provided. Be brief (WhatsApp-length).
+Format for WhatsApp: a short *bold* heading, then one fact per line; lists as "• Name — amount"; amounts exactly as given; no markdown headers, tables or code.
 Reply in ${lang === 'ml' ? 'Malayalam' : lang === 'ar' ? 'Arabic' : 'English'}. If the data does not answer the question, say so.`,
       messages: [{ role: 'user', content: `Books data:\n${context}\n\nQuestion: ${question}` }],
     });

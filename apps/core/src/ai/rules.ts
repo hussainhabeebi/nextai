@@ -1,4 +1,5 @@
 import type { AccountKind, IntentResult } from '@nextai/shared';
+import { parseQuestion } from './question.js';
 
 const MODES: Record<string, string> = {
   cash: 'cash', bank: 'bank', 'bank transfer': 'bank', transfer: 'bank', cheque: 'bank', check: 'bank', neft: 'bank', imps: 'bank', rtgs: 'bank',
@@ -163,7 +164,19 @@ const stripAmount = (s: string) =>
  * short phrasings ("paid 500 for tea", "Ravi paid 2000", "sold 5000 to Ravi", "report p&l").
  * Returns undefined when unsure so the caller can fall back to the LLM.
  */
-export function ruleClassify(text: string): IntentResult | undefined {
+export function ruleClassify(text: string, opts: { today?: string; country?: 'IN' | 'AE' } = {}): IntentResult | undefined {
+  const r = classifyMessage(text);
+  const money = r && ['record_expense', 'record_sale', 'payment_in', 'payment_out', 'record_purchase', 'sales_return', 'purchase_return', 'transfer'].includes(r.intent);
+  // A transaction with its amount, or anything else the rules are sure of, wins.
+  if (r && r.intent !== 'ask_books' && (!money || r.entities.amount)) return r;
+  // "how much sales is today", "Ravi balance", "payments to AM Motors last month": a question about the books.
+  if (parseQuestion(text, opts.today ?? new Date().toISOString().slice(0, 10), opts.country ?? 'IN')) {
+    return { intent: 'ask_books', confidence: 0.9, entities: { question: text.trim() } };
+  }
+  return r;
+}
+
+function classifyMessage(text: string): IntentResult | undefined {
   const raw = text.trim().toLowerCase().replace(/\s+/g, ' ');
   const typed = (part: string) => asTyped(text, part); // names keep the casing they were typed with ("SBI", "4L Fashion")
   // "by bank" / "via upi" / "using card" → payment mode; removed so it doesn't end up in party names.
@@ -196,11 +209,12 @@ export function ruleClassify(text: string): IntentResult | undefined {
   if (create) return create;
 
   const report = t.match(/\b(report|statement)\b.*?\b(p&l|pnl|profit|loss|balance sheet|bs|receivable|payable|ledger|cash ?flow)\b/) ??
-    t.match(/\b(p&l|pnl|profit and loss|balance sheet)\b/);
+    t.match(/\b(p&l|pnl|profit and loss|profit & loss|balance sheet|cash ?flow|general ledger)\b(?:\s+(?:report|statement))?/) ??
+    t.match(/\b(receivables?|payables?|ageing)\s+(report|statement)\b/);
   if (report) {
     const r = report[0];
     const key = /p&l|pnl|profit/.test(r) ? 'profit_and_loss' : /balance|bs/.test(r) ? 'balance_sheet' : /receivable/.test(r) ? 'receivables' : /payable/.test(r) ? 'payables' : /cash/.test(r) ? 'cash_flow' : 'general_ledger';
-    return { intent: 'request_report', confidence: 0.9, entities: { report: key } };
+    return { intent: 'request_report', confidence: 0.9, entities: { report: key, question: text.trim() } };
   }
 
   if (/\bremind\b/.test(t)) {
