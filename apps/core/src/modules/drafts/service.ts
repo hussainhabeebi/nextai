@@ -205,6 +205,12 @@ async function ensureParty(c: Container, tenant: Tenant, kind: 'Customer' | 'Sup
 export async function postDraft(c: Container, tenantId: string, draftId: string): Promise<Draft> {
   const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: tenantId } }));
   const db = tenantDb(c.prisma, tenantId);
+  const setupStatus = (tenant.settings as { erpSetup?: { status?: string } } | null)?.erpSetup?.status;
+  if (!tenant.erpApiKeyEnc && (setupStatus === 'queued' || setupStatus === 'running')) {
+    // New signup whose ERPNext site is still being built: keep the entry confirmed and post it once ready.
+    await c.queue.enqueue(QUEUES.draftPost, { tenantId, draftId }, { jobId: `post-${draftId}-wait-${Date.now()}`, delayMs: 90_000 });
+    return getDraft(c, tenantId, draftId);
+  }
   const claimed = await db.draft.updateMany({ where: { id: draftId, status: { in: ['confirmed', 'failed'] } }, data: { status: 'posting' } });
   const draft = await getDraft(c, tenantId, draftId);
   if (claimed.count === 0) {

@@ -18,7 +18,7 @@ interface Detail {
   currency: string;
   status: string;
   plan: { code: string; name: string } | null;
-  settings: Record<string, unknown> & { provisioning?: Record<string, { status: string; note?: string; at: string }> };
+  settings: Record<string, unknown> & { provisioning?: Record<string, { status: string; note?: string; at: string }>; erpSetup?: { mode: string; status: string; step?: string; site?: string; attempts?: number; error?: string } };
   users: Array<{ id: string; name: string; phone: string; role: string; status: string; lastLoginAt: string | null }>;
   usageCounters: Array<{ period: string; messages: number; ocrPages: number; invoicesSent: number; aiCostMicros: number }>;
   connections: { erpnext: { configured: boolean; siteUrl: string | null; health: { ok: boolean; latencyMs: number; at: string } | null }; chatwoot: { configured: boolean; inboxId: number | null }; erpWebhook: { configured: boolean } };
@@ -34,6 +34,10 @@ export default function TenantDetail() {
   const act = async (a: 'suspend' | 'resume') => {
     if (!confirm(`${a} ${t.name}?`)) return;
     await adminApi.post(`/admin/v1/tenants/${id}/${a}`);
+    await reload();
+  };
+  const retrySetup = async () => {
+    await adminApi.post(`/admin/v1/tenants/${id}/retry-setup`);
     await reload();
   };
   const viewAs = async () => {
@@ -69,6 +73,22 @@ export default function TenantDetail() {
       {t.settings.provisioning && (
         <section>
           <h2 className="mb-2 font-semibold">Provisioning</h2>
+          {t.settings.erpSetup?.mode === 'site' && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-card p-3 text-sm">
+              <span>
+                Own ERPNext site <strong>{t.settings.erpSetup.site}</strong>
+              </span>
+              <Badge tone={t.settings.erpSetup.status === 'ready' ? 'green' : t.settings.erpSetup.status === 'failed' ? 'red' : 'amber'}>{t.settings.erpSetup.status}</Badge>
+              {t.settings.erpSetup.step && <span className="text-muted">step: {t.settings.erpSetup.step}</span>}
+              {!!t.settings.erpSetup.attempts && <span className="text-muted">attempts: {t.settings.erpSetup.attempts}</span>}
+              {t.settings.erpSetup.error && <span className="text-xs text-red-600">{t.settings.erpSetup.error}</span>}
+              {canOps && t.settings.erpSetup.status !== 'ready' && (
+                <Button variant="secondary" onClick={() => void retrySetup()}>
+                  Retry setup
+                </Button>
+              )}
+            </div>
+          )}
           <Table rows={Object.entries(t.settings.provisioning)} cols={[{ h: 'Step', c: ([k]) => k }, { h: 'Status', c: ([, v]) => <Badge tone={v.status === 'done' ? 'green' : v.status === 'manual' ? 'amber' : 'red'}>{v.status}</Badge> }, { h: 'Note', c: ([, v]) => <span className="text-xs">{v.note}</span> }]} />
         </section>
       )}

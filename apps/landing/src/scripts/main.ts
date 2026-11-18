@@ -74,7 +74,7 @@ codeForm.addEventListener('submit',async e=>{
   const response=await fetch(verifyURL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signupId,code:value})});
   if(!response.ok){const msg=await errorText(response);throw new Error(msg||'That code didn’t work. Please try again.');}
   const body=await response.json() as {loginUrl:string};
-  status.className='status-success';status.textContent='You’re in! Opening NextAi…';track('signup_success',{country:country.value});
+  status.className='status-success';status.textContent='You’re in! Your own ERPNext books are being set up. Opening NextAi…';track('signup_success',{country:country.value});
   location.href=body.loginUrl;
  }catch(err){status.className='status-error';status.textContent=(err as Error).message;track('signup_verify_error');}
  finally{inFlight=false;submit.disabled=false;submit.innerHTML='Verify and open NextAi <span aria-hidden="true">↗</span>';}

@@ -174,8 +174,10 @@ Without R2 credentials, uploads go to the shared `uploads` volume (`/data/storag
 - WebAuthn sign-in and web-push sending are not implemented yet (push subscriptions are stored).
 - Multi-page captures from the app are processed as separate documents.
 - Razorpay provider is a stub. Legal pages on the landing site are placeholders.
-- Self-signup: the landing form posts to `/v1/signup` (email code → trial business → own company in the shared
-  ERPNext site via `ERPNEXT_SHARED_*`); the client's WhatsApp number is still connected by an admin. See docs/go-live.md §1c.
+- Self-signup: the landing form posts to `/v1/signup` (email code → trial business → **its own ERPNext site**
+  `<slug>.nextaierp.com`, built automatically through the provisioner; or a company in the shared site via
+  `ERPNEXT_SHARED_*` when no provisioner is set — `SIGNUP_ERP_MODE`). The client's WhatsApp number is still
+  connected by an admin. See docs/go-live.md §1c.
 - Payment links (Razorpay, India): each business connects its own account in Settings; links go out with
   invoices and reminders and paid links post a Payment Entry against the invoice. See docs/go-live.md §2b.
 - Daily briefing and tax deadlines (GST/TDS/ITR in India, VAT/Corporate Tax in the UAE): Settings → Tax deadlines.

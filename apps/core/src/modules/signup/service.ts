@@ -11,6 +11,8 @@ import { logger } from '../../lib/logger.js';
 import { audit } from '../audit/audit.js';
 import { reportEmail } from '../email/templates.js';
 import { createTenantRecord } from '../tenants/service.js';
+import { signupErpMode } from '../erpnext/company-setup.js';
+import { markSiteQueued } from '../provisioning/own-site.js';
 
 export const signupRequestSchema = z.object({
   businessName: z.string().trim().min(2).max(120),
@@ -120,6 +122,7 @@ export async function verifySignup(c: Container, signupId: string, code: string,
     }),
   );
   await audit(c.prisma, { tenantId: tenant.id, actorId: ownerId, actorType: 'user', channel: 'app', action: 'tenant.signup', entity: 'tenant', entityId: tenant.id, after: { name: tenant.name, slug, plan: create.planCode, country: create.country }, ip });
+  if (signupErpMode() === 'site') await markSiteQueued(c, tenant.id); // the app shows "setting up your books" until ready
   await c.queue.enqueue(QUEUES.tenantSetup, { tenantId: tenant.id }, { jobId: `setup-${tenant.id}` });
 
   const token = randomBytes(24).toString('base64url');
@@ -143,7 +146,7 @@ async function notify(c: Container, tenantId: string, t: TenantCreate) {
   const app = e.APP_URL.replace(/\/+$/, '');
   const welcome = reportEmail({
     title: `Welcome to NextAi, ${t.ownerName}!`,
-    intro: `${t.name} is on a 14-day free trial. We are setting up your books now, and our team will connect your WhatsApp Business number (usually within one business day). Meanwhile you can capture bills in the app.`,
+    intro: `${t.name} is on a 14-day free trial. We are setting up your own ERPNext books now (a few minutes), and our team will connect your WhatsApp Business number (usually within one business day). Meanwhile you can capture bills in the app.`,
     rows: [
       { label: 'Business', value: t.name },
       { label: 'WhatsApp number', value: t.ownerPhone },
