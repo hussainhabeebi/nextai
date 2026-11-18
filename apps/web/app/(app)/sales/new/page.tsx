@@ -1,36 +1,39 @@
 'use client';
 
-import { Plus, Trash2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Page } from '@/components/page';
+import { EntryLayout, FieldGrid, Saved, useToday } from '@/components/entry';
+import { LineItems, cleanLines, emptyLine, lineTotal } from '@/components/line-items';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Field, Input } from '@/components/ui/input';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { todayIso } from '@/lib/entries';
 import { money } from '@/lib/format';
 
 export default function NewInvoice() {
-  const router = useRouter();
   const { me } = useAuth();
+  const today = useToday();
   const [customer, setCustomer] = useState('');
   const [phone, setPhone] = useState('');
-  const [lines, setLines] = useState([{ description: '', qty: '1', rate: '' }]);
+  const [date, setDate] = useState(todayIso());
+  const [dueDate, setDueDate] = useState('');
+  const [lines, setLines] = useState([emptyLine()]);
   const [err, setErr] = useState('');
+  const [saved, setSaved] = useState('');
   const [busy, setBusy] = useState(false);
-  const total = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.rate || 0), 0);
+  const total = lineTotal(lines);
 
   const submit = async () => {
     setBusy(true);
     setErr('');
     try {
-      await api.post('/v1/invoices', {
-        customer,
-        customerPhone: phone || undefined,
-        lines: lines.filter((l) => l.description && Number(l.rate) >= 0).map((l) => ({ description: l.description, qty: Number(l.qty), rate: Number(l.rate) })),
-      });
-      router.push('/sales');
+      await api.post('/v1/invoices', { customer, customerPhone: phone || undefined, date, dueDate: dueDate || undefined, lines: cleanLines(lines) });
+      setSaved(`Invoice for ${customer} — ${money(total, me?.tenant.currency)} saved and being posted.${phone ? ' It will be sent on WhatsApp.' : ''}`);
+      setCustomer('');
+      setPhone('');
+      setDueDate('');
+      setLines([emptyLine()]);
+      void today.reload();
     } catch (e) {
       setErr((e as ApiError).message);
     } finally {
@@ -39,33 +42,29 @@ export default function NewInvoice() {
   };
 
   return (
-    <Page title="New invoice" back="/sales">
+    <EntryLayout title="Sales invoice" kind="sale" today={today}>
+      {saved && <Saved text={saved} onDismiss={() => setSaved('')} />}
       <form className="space-y-4" onSubmit={(e) => (e.preventDefault(), void submit())}>
-        <Field label="Customer">
-          <Input value={customer} onChange={(e) => setCustomer(e.target.value)} required />
-        </Field>
-        <Field label="Customer WhatsApp (to send the invoice)">
-          <Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </Field>
-        {lines.map((l, i) => (
-          <Card key={i} className="space-y-2">
-            <Input placeholder="Item / service" value={l.description} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} required />
-            <div className="grid grid-cols-[1fr_2fr_auto] gap-2">
-              <Input inputMode="decimal" aria-label="Qty" value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
-              <Input inputMode="decimal" aria-label="Rate" placeholder="Rate" value={l.rate} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, rate: e.target.value } : x)))} required />
-              <Button type="button" variant="ghost" size="icon" aria-label="Remove line" onClick={() => setLines(lines.filter((_, j) => j !== i))} disabled={lines.length === 1}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </Card>
-        ))}
-        <Button type="button" variant="secondary" onClick={() => setLines([...lines, { description: '', qty: '1', rate: '' }])}>
-          <Plus className="h-4 w-4" /> Add line
-        </Button>
-        <p className="text-end text-lg font-bold">Total {money(total, me?.tenant.currency)}</p>
+        <FieldGrid>
+          <Field label="Customer">
+            <Input value={customer} onChange={(e) => setCustomer(e.target.value)} required autoFocus />
+          </Field>
+          <Field label="Customer WhatsApp" hint="Optional — we send the invoice PDF here">
+            <Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+          <Field label="Invoice date">
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </Field>
+          <Field label="Due date (optional)">
+            <Input type="date" value={dueDate} min={date} onChange={(e) => setDueDate(e.target.value)} />
+          </Field>
+        </FieldGrid>
+        <LineItems lines={lines} onChange={setLines} currency={me?.tenant.currency} />
         {err && <p className="text-sm text-red-600">{err}</p>}
-        <Button size="lg" disabled={busy || !customer || total <= 0}>Create & send</Button>
+        <Button size="lg" className="sm:w-auto" disabled={busy || !customer || total <= 0}>
+          {busy ? 'Saving…' : phone ? 'Save & send' : 'Save invoice'}
+        </Button>
       </form>
-    </Page>
+    </EntryLayout>
   );
 }

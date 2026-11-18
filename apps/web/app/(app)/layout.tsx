@@ -1,12 +1,13 @@
 'use client';
 
-import { Camera, CheckCircle2, Home, Menu, Receipt } from 'lucide-react';
+import { BarChart3, Bot, Camera, CheckCircle2, CreditCard, Home, Landmark, Menu, Receipt, Settings, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { LogoPrimary } from '@/components/brand';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { ENTRY_ACTIONS } from '@/lib/entries';
 import { useOnline } from '@/lib/hooks';
 import { useI18n } from '@/lib/i18n';
 
@@ -17,6 +18,79 @@ const isImpersonating = (token: string) => {
     return false;
   }
 };
+
+function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
+  const { t } = useI18n();
+  const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
+  const groups: Array<{ title?: string; items: Array<{ href: string; label: string; icon: typeof Home; badge?: number }> }> = [
+    {
+      items: [
+        { href: '/', label: t('nav.home'), icon: Home },
+        { href: '/capture', label: t('nav.capture'), icon: Camera },
+        { href: '/approvals', label: t('nav.approvals'), icon: CheckCircle2, badge: approvals },
+      ],
+    },
+    { title: 'New entry', items: ENTRY_ACTIONS.filter((a) => a.kind !== 'daily').map((a) => ({ href: a.href, label: a.label, icon: a.icon })) },
+    {
+      title: 'Books',
+      items: [
+        { href: '/sales', label: 'Sales invoices', icon: Receipt },
+        { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
+        { href: '/parties', label: 'Customers & suppliers', icon: Users },
+      ],
+    },
+    {
+      title: 'Reports',
+      items: [
+        { href: '/reports/daily', label: 'Daily report', icon: ENTRY_ACTIONS.find((a) => a.kind === 'daily')!.icon },
+        { href: '/reports', label: 'Financial reports', icon: BarChart3 },
+        { href: '/tax', label: 'Tax centre', icon: Landmark },
+        { href: '/ask', label: 'Ask your books', icon: Bot },
+      ],
+    },
+    {
+      title: 'Account',
+      items: [
+        { href: '/settings', label: 'Settings & team', icon: Settings },
+        { href: '/billing', label: 'Billing', icon: CreditCard },
+      ],
+    },
+  ];
+  // "/reports" should not light up while on "/reports/daily"
+  const active = (href: string) => (href === '/reports' ? isActive(href) && !path.startsWith('/reports/daily') : href === '/sales' ? isActive(href) && path !== '/sales/new' : isActive(href));
+  return (
+    <aside className="fixed inset-y-0 start-0 z-30 hidden w-64 flex-col border-e border-line bg-card lg:flex print:hidden">
+      <div className="flex h-16 items-center border-b border-line px-5">
+        <LogoPrimary className="text-lg" />
+      </div>
+      <nav aria-label="Sidebar" className="flex-1 overflow-y-auto px-3 py-4">
+        {groups.map((g, i) => (
+          <div key={i} className="mb-4">
+            {g.title && <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted">{g.title}</p>}
+            <ul className="space-y-0.5">
+              {g.items.map(({ href, label, icon: Icon, badge }) => {
+                const on = active(href);
+                return (
+                  <li key={href}>
+                    <Link
+                      href={href}
+                      aria-current={on ? 'page' : undefined}
+                      className={cn('flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition', on ? 'bg-brand-light text-brand dark:bg-brand/20' : 'text-fg/80 hover:bg-bg hover:text-fg')}
+                    >
+                      <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={on ? 2.4 : 1.9} />
+                      <span className="flex-1 truncate">{label}</span>
+                      {!!badge && <span className="rounded-full bg-brand-amber px-1.5 text-[11px] font-bold text-black">{badge}</span>}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </aside>
+  );
+}
 
 function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
@@ -31,10 +105,11 @@ function Shell({ children }: { children: ReactNode }) {
     { href: '/more', label: t('nav.more'), icon: Menu },
   ];
   return (
-    <div className="min-h-dvh">
-      <div className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-[640px] items-center justify-between gap-2 px-4">
-          <LogoPrimary className="text-lg" />
+    <div className="min-h-dvh lg:ps-64">
+      <Sidebar path={path} />
+      <div className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur print:hidden">
+        <div className="mx-auto flex h-14 max-w-[640px] items-center justify-between gap-2 px-4 lg:h-16 lg:max-w-none lg:px-8">
+          <LogoPrimary className="text-lg lg:invisible" />
           {session && session.memberships.length > 1 ? (
             <select
               aria-label="Switch business"
@@ -66,7 +141,7 @@ function Shell({ children }: { children: ReactNode }) {
         {!online && <div className="bg-line px-4 py-1 text-center text-xs">Offline — captures will sync later</div>}
       </div>
       <main>{children}</main>
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-line bg-card/95 backdrop-blur" aria-label="Main">
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-line bg-card/95 backdrop-blur lg:hidden print:hidden" aria-label="Main">
         <ul className="mx-auto grid max-w-[640px] grid-cols-5">
           {tabs.map(({ href, label, icon: Icon }) => {
             const active = href === '/' ? path === '/' : path.startsWith(href);

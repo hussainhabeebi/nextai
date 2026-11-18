@@ -8,7 +8,7 @@ import { sha256 } from '../../lib/crypto.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/errors.js';
 import { audit } from '../../modules/audit/audit.js';
 import { cancelDraft, confirmDraft, createDraft, getDraft, updateDraftPayload } from '../../modules/drafts/service.js';
-import { erpContext } from '../../modules/erpnext/mappers.js';
+import { account, erpContext, guessExpenseAccount } from '../../modules/erpnext/mappers.js';
 import { booksContext, runReport, totalOutstanding } from '../../modules/reports/reports.js';
 import { incrementUsage } from '../../modules/usage/usage.js';
 import { tenantKey } from '../../storage/storage.js';
@@ -214,6 +214,262 @@ export const appRoutes =
         const payload: DraftPayload = { partyName: b.party, date: b.date ?? today(), currency: req.tenant!.currency as Currency, lines: [], total: b.amount, paymentMode: b.mode, referenceNo: b.reference, validationIssues: [] };
         const draft = await createDraft(c, req.tenant!, { userId: req.user!.sub, type: b.direction === 'in' ? 'payment_in' : 'payment_out', payload, actor: actorOf(req) });
         return reply.code(201).send(await confirmDraft(c, req.tenant!, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Purchase bills (manual entry) ----------------
+    const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+    app.post(
+      '/purchases',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            supplier: z.string().min(1).max(140),
+            billNo: z.string().max(140).optional(),
+            date: isoDay.optional(),
+            dueDate: isoDay.optional(),
+            lines: z
+              .array(
+                z.object({
+                  description: z.string().min(1).max(500),
+                  qty: z.number().positive(),
+                  rate: z.number().nonnegative(),
+                }),
+              )
+              .min(1),
+            paymentMode: z.enum(['credit', 'cash', 'bank', 'upi', 'card']).default('credit'),
+            remarks: z.string().max(500).optional(),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const ctx = erpContext(t);
+        const lines = b.lines.map((l) => ({
+          ...l,
+          amount: Math.round(l.qty * l.rate * 100) / 100,
+          account: guessExpenseAccount(ctx, l.description),
+        }));
+        const payload: DraftPayload = {
+          partyName: b.supplier,
+          billNo: b.billNo,
+          date: b.date ?? today(),
+          dueDate: b.dueDate,
+          currency: t.currency as Currency,
+          lines,
+          total: lines.reduce((s, l) => s + l.amount, 0),
+          paymentMode: b.paymentMode,
+          remarks: b.remarks,
+          validationIssues: [],
+        };
+        const draft = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'purchase_invoice',
+          payload,
+          actor: actorOf(req),
+        });
+        return reply.code(201).send(await confirmDraft(c, t, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Expenses (no supplier bill → journal entry) ----------------
+    const EXPENSE_CATEGORIES: Record<string, string> = {
+      auto: '',
+      travel: 'Travel Expenses',
+      food: 'Entertainment Expenses',
+      rent: 'Rent',
+      utilities: 'Utility Expenses',
+      salary: 'Salary',
+      office: 'Office Maintenance Expenses',
+      postage: 'Postal Expenses',
+      marketing: 'Marketing Expenses',
+      misc: 'Miscellaneous Expenses',
+    };
+    app.get('/expense-categories', { schema: { tags: ['app'] } }, async () => ({
+      items: Object.entries(EXPENSE_CATEGORIES).map(([key, name]) => ({
+        key,
+        name: name || 'Auto-detect from description',
+      })),
+    }));
+    app.post(
+      '/expenses',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            description: z.string().min(1).max(500),
+            amount: z.number().positive(),
+            category: z.enum(Object.keys(EXPENSE_CATEGORIES) as [string, ...string[]]).default('auto'),
+            paymentMode: z.enum(['cash', 'bank', 'upi', 'card']).default('cash'),
+            date: isoDay.optional(),
+            reference: z.string().max(140).optional(),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const ctx = erpContext(t);
+        const cat = EXPENSE_CATEGORIES[b.category];
+        const expenseAccount = cat ? account(ctx, cat) : guessExpenseAccount(ctx, b.description);
+        const payload: DraftPayload = {
+          date: b.date ?? today(),
+          currency: t.currency as Currency,
+          lines: [{ description: b.description, qty: 1, rate: b.amount, amount: b.amount }],
+          total: b.amount,
+          paymentMode: b.paymentMode,
+          expenseAccount,
+          referenceNo: b.reference,
+          remarks: b.description,
+          validationIssues: [],
+        };
+        const draft = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'journal_entry',
+          payload,
+          actor: actorOf(req),
+        });
+        return reply.code(201).send(await confirmDraft(c, t, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Bank entries (cash deposit / withdrawal / bank charges) ----------------
+    app.post(
+      '/bank-entries',
+      {
+        schema: {
+          tags: ['app'],
+          body: z.object({
+            kind: z.enum(['deposit', 'withdrawal', 'charges']),
+            amount: z.number().positive(),
+            date: isoDay.optional(),
+            reference: z.string().max(140).optional(),
+            remarks: z.string().max(500).optional(),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const t = req.tenant!;
+        const b = req.body;
+        const ctx = erpContext(t);
+        const cash = account(ctx, 'cash');
+        const bank = account(ctx, 'bank');
+        // journal_entry maps expenseAccount → debit, paidFromAccount → credit
+        const [debit, credit, label] =
+          b.kind === 'deposit'
+            ? [bank, cash, 'Cash deposited to bank']
+            : b.kind === 'withdrawal'
+              ? [cash, bank, 'Cash withdrawn from bank']
+              : [account(ctx, 'Bank Charges'), bank, 'Bank charges'];
+        const remarks = [label, b.remarks].filter(Boolean).join(' — ');
+        const payload: DraftPayload = {
+          date: b.date ?? today(),
+          currency: t.currency as Currency,
+          lines: [{ description: remarks, qty: 1, rate: b.amount, amount: b.amount }],
+          total: b.amount,
+          paymentMode: 'bank',
+          expenseAccount: debit,
+          paidFromAccount: credit,
+          referenceNo: b.reference,
+          remarks,
+          validationIssues: [],
+        };
+        const draft = await createDraft(c, t, {
+          userId: req.user!.sub,
+          type: 'journal_entry',
+          payload,
+          actor: actorOf(req),
+        });
+        return reply.code(201).send(await confirmDraft(c, t, draft.id, actorOf(req)));
+      },
+    );
+
+    // ---------------- Daily report ----------------
+    app.get(
+      '/daily-report',
+      { ...perTenant, schema: { tags: ['app'], querystring: z.object({ date: isoDay.optional() }) } },
+      async (req) => {
+        const t = req.tenant!;
+        const date = req.query.date ?? today();
+        const drafts = await req.db!.draft.findMany({
+          where: {
+            status: { in: ['confirmed', 'posting', 'posted'] },
+            payload: { path: ['date'], equals: date },
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        const cashAcc = account(erpContext(t), 'cash');
+        const bankAcc = account(erpContext(t), 'bank');
+        const totals = {
+          sales: 0,
+          purchases: 0,
+          expenses: 0,
+          bank: 0,
+          receipts: 0,
+          payments: 0,
+          cashIn: 0,
+          cashOut: 0,
+        };
+        const entries = drafts.map((d) => {
+          const p = d.payload as DraftPayload;
+          const isContra =
+            d.type === 'journal_entry' &&
+            [cashAcc, bankAcc].includes(p.expenseAccount ?? '') &&
+            [cashAcc, bankAcc].includes(p.paidFromAccount ?? '');
+          const isBank =
+            d.type === 'journal_entry' &&
+            (isContra || (p.paidFromAccount === bankAcc && /bank charges/i.test(p.expenseAccount ?? '')));
+          const kind =
+            d.type === 'sales_invoice'
+              ? 'sale'
+              : d.type === 'purchase_invoice'
+                ? 'purchase'
+                : d.type === 'payment_in'
+                  ? 'receipt'
+                  : d.type === 'payment_out'
+                    ? 'payment'
+                    : isBank
+                      ? 'bank'
+                      : 'expense';
+          const paidNow = p.paymentMode && !['credit', 'unknown'].includes(p.paymentMode);
+          if (kind === 'sale') totals.sales += p.total;
+          if (kind === 'purchase') totals.purchases += p.total;
+          if (kind === 'expense') totals.expenses += p.total;
+          if (kind === 'bank') totals.bank += p.total;
+          if (kind === 'receipt') totals.receipts += p.total;
+          if (kind === 'payment') totals.payments += p.total;
+          if (kind === 'receipt') totals.cashIn += p.total;
+          if (
+            kind === 'payment' ||
+            kind === 'expense' ||
+            (kind === 'purchase' && paidNow) ||
+            (kind === 'bank' && !isContra)
+          )
+            totals.cashOut += p.total;
+          return {
+            id: d.id,
+            kind,
+            party: p.partyName ?? null,
+            description: p.remarks ?? p.lines.map((l) => l.description).join(', '),
+            amount: p.total,
+            mode: p.paymentMode ?? null,
+            reference: p.referenceNo ?? p.billNo ?? null,
+            erpName: d.erpName,
+            status: d.status,
+            createdAt: d.createdAt,
+          };
+        });
+        const round = (n: number) => Math.round(n * 100) / 100;
+        return {
+          date,
+          currency: t.currency as Currency,
+          totals: Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, round(v)])),
+          netCashFlow: round(totals.cashIn - totals.cashOut),
+          grossProfit: round(totals.sales - totals.purchases - totals.expenses),
+          entries,
+        };
       },
     );
 

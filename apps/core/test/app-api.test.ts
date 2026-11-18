@@ -90,6 +90,33 @@ describe('customer app API', () => {
     expect(over.statusCode).toBe(402); // growth plan: 4 users
   });
 
+  it('records purchases, expenses, bank entries and builds the daily report', async () => {
+    const date = '2026-10-15';
+    const post = (url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: auth(tokA), payload: payload as object });
+    const pur = await post('/v1/purchases', { supplier: 'Paper Co', billNo: 'PC-9', date, paymentMode: 'cash', lines: [{ description: 'printer paper', qty: 2, rate: 250 }] });
+    expect(pur.statusCode).toBe(201);
+    expect(pur.json().payload.lines[0].account).toBe('Office Maintenance Expenses - AIL');
+    const exp = await post('/v1/expenses', { description: 'taxi to client', amount: 300, date });
+    expect(exp.statusCode).toBe(201);
+    expect(exp.json().payload.expenseAccount).toBe('Travel Expenses - AIL');
+    const rent = await post('/v1/expenses', { description: 'October', amount: 9000, category: 'rent', paymentMode: 'bank', date });
+    expect(rent.json().payload.expenseAccount).toBe('Rent - AIL');
+    const dep = await post('/v1/bank-entries', { kind: 'deposit', amount: 2000, date });
+    expect(dep.statusCode).toBe(201);
+    expect(dep.json().payload).toMatchObject({ expenseAccount: 'Bank Accounts - AIL', paidFromAccount: 'Cash - AIL' });
+    await post('/v1/payments', { direction: 'in', party: 'Acme', amount: 1200, mode: 'upi', date });
+    await drain(c);
+
+    const r = await app.inject({ method: 'GET', url: `/v1/daily-report?date=${date}`, headers: auth(tokA) });
+    expect(r.statusCode).toBe(200);
+    const body = r.json();
+    expect(body.entries.map((e: { kind: string }) => e.kind)).toEqual(['purchase', 'expense', 'expense', 'bank', 'receipt']);
+    expect(body.totals).toMatchObject({ purchases: 500, expenses: 9300, bank: 2000, receipts: 1200, cashIn: 1200, cashOut: 9800 });
+    expect(body.netCashFlow).toBe(-8600);
+    const other = await app.inject({ method: 'GET', url: `/v1/daily-report?date=${date}`, headers: auth(tokB) });
+    expect(other.json().entries).toHaveLength(0);
+  });
+
   it('suspended tenants are read-only', async () => {
     await withSystemTx(c.prisma, (tx) => tx.tenant.update({ where: { id: B.tenant.id }, data: { status: 'suspended' } }));
     expect((await app.inject({ method: 'GET', url: '/v1/drafts', headers: auth(tokB) })).statusCode).toBe(200);

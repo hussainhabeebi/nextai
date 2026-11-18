@@ -8,6 +8,10 @@ export default function Reports() {
   return (
     <Page title="Reports" back="/more">
       <Card className="divide-y divide-line p-0">
+        <Link href="/reports/daily" className="flex min-h-14 items-center px-4">
+          <span className="flex-1 font-medium">Daily report (day book)</span>
+          <ChevronRight className="h-4 w-4 text-muted rtl:rotate-180" />
+        </Link>
         {Object.entries(REPORT_NAMES).map(([key, name]) => (
           <Link key={key} href={`/reports/${key}`} className="flex min-h-14 items-center px-4">
             <span className="flex-1">{name}</span>
