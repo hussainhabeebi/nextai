@@ -55,6 +55,13 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v !== 'false'),
+  /**
+   * Where a website signup's books live:
+   *  - site:   a dedicated ERPNext site per client, built automatically through the provisioner
+   *  - shared: one company per client in the shared ERPNext site (ERPNEXT_SHARED_*)
+   *  - auto (default): site when PROVISIONER_URL + PROVISIONER_SECRET are set, else shared if configured
+   */
+  SIGNUP_ERP_MODE: z.enum(['auto', 'site', 'shared']).default('auto'),
   /** Shared ERPNext site: self-signup creates one company per client here. Empty = admin connects ERPNext. */
   ERPNEXT_SHARED_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
   ERPNEXT_SHARED_API_KEY: z.string().optional(),

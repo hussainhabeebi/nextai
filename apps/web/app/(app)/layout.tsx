@@ -101,8 +101,16 @@ function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
 function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const { t } = useI18n();
-  const { me, session, switchTenant } = useAuth();
+  const { me, session, switchTenant, reloadMe } = useAuth();
   const online = useOnline();
+  const setup = me?.tenant.setup;
+  const building = setup?.status === 'queued' || setup?.status === 'running';
+  // New signup: refresh until the client's own ERPNext site is ready.
+  useEffect(() => {
+    if (!building) return;
+    const id = setInterval(() => void reloadMe().catch(() => undefined), 20_000);
+    return () => clearInterval(id);
+  }, [building, reloadMe]);
   const { labels } = useView();
   // Tenant colour theme (Settings → App view & style). Teal = the original defaults in globals.css.
   const style = me?.tenant.appStyle ?? 'teal';
@@ -155,6 +163,19 @@ function Shell({ children }: { children: ReactNode }) {
           </Link>
         )}
         {session && isImpersonating(session.accessToken) && <div className="bg-black px-4 py-1 text-center text-xs text-white">Admin view-only session (audited)</div>}
+        {building && (
+          <div role="status" className="flex items-center justify-center gap-2 bg-brand-light px-4 py-2 text-center text-xs text-brand-dark dark:bg-brand/20 dark:text-white">
+            <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+            <span>
+              Setting up your own ERPNext books{setup?.site ? ` at ${setup.site}` : ''} — usually a few minutes. You can add entries now; they&apos;ll post as soon as it&apos;s ready.
+            </span>
+          </div>
+        )}
+        {setup?.status === 'failed' && (
+          <div role="alert" className="bg-amber-100 px-4 py-2 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-100">
+            Your books setup needs a little help — our team has been notified and will finish it shortly. Your entries are saved.
+          </div>
+        )}
         {!online && <div className="bg-line px-4 py-1 text-center text-xs">Offline — captures will sync later</div>}
       </div>
       <main>{children}</main>

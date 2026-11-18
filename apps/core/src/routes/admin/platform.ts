@@ -15,6 +15,7 @@ import { audit } from '../../modules/audit/audit.js';
 import { signAccess } from '../../modules/auth/tokens.js';
 import { CHOICES, confirmDraft, getDraft, summaryText, updateDraftPayload } from '../../modules/drafts/service.js';
 import { PROVISION_STEPS, runProvisionStep } from '../../modules/provisioning/wizard.js';
+import { retryOwnSite } from '../../modules/provisioning/own-site.js';
 import { createTenantRecord } from '../../modules/tenants/service.js';
 import { currentPeriod } from '../../modules/usage/usage.js';
 import { planLimits } from '../../modules/billing/gating.js';
@@ -136,6 +137,17 @@ export const platformRoutes =
       await adminAudit(req, 'impersonate.start', 'tenant', req.params.id, undefined, undefined, req.params.id);
       const accessToken = await signAccess({ sub: owner.id, tid: req.params.id, role: 'staff', typ: 'app', imp: req.admin!.sub });
       return { accessToken, url: `${env().APP_URL}/#imp=${accessToken}` };
+    });
+
+    /** Website signup whose own ERPNext site failed to build: try again (finished steps are skipped). */
+    app.post('/tenants/:id/retry-setup', { ...ops, schema: { tags: ['admin'], params: uuidParam } }, async (req) => {
+      const t = await sys((tx) => tx.tenant.findUnique({ where: { id: req.params.id } }));
+      if (!t) throw notFound('Tenant');
+      const mode = (t.settings as { erpSetup?: { mode?: string } } | null)?.erpSetup?.mode;
+      if (mode !== 'site') throw badRequest('This business was not set up with its own ERPNext site');
+      await retryOwnSite(c, t.id);
+      await adminAudit(req, 'provision.retry_setup', 'tenant', t.id, undefined, undefined, t.id);
+      return { queued: true };
     });
 
     // ---------------- Provisioning ----------------

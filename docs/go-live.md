@@ -96,7 +96,14 @@ New clients sign up on nextaierp.com: business name, their name, email, WhatsApp
 6-digit **email** code; nothing is created until it is verified. Then NextAi:
 
 1. creates the business on a 14-day trial (plan from the pricing button, Growth by default) and its owner,
-2. creates **its own company in your shared ERPNext site** (background job `tenant.setup`, retried, never duplicated),
+2. sets up its ERPNext books in the background (job `tenant.setup`), in one of two ways:
+   - **its own ERPNext site** `<business>.nextaierp.com` (recommended; automatic when the provisioner is configured):
+     new site → India Compliance for Indian clients → setup wizard (company, chart of accounts, fiscal year
+     Apr–Mar in India / Jan–Dec in the UAE, tax templates) → scheduler + host name → `nextai-bot` API user.
+     Takes a few minutes; the app shows "Setting up your own ERPNext books…" and entries made meanwhile post
+     when the site is ready. Each step is saved, so retries resume (2, 4, 8, 16, 30 min); after 6 failed
+     attempts admins get "Signup setup failed" by email and can re-run it from Admin → Provisioning.
+   - **a company in your shared ERPNext site** (when no provisioner is configured),
 3. logs them straight into the app (one-time link) and emails a welcome; admins get "New signup" by email,
 4. sends app login codes by **email** until their WhatsApp number is connected.
 
@@ -108,14 +115,28 @@ Setup (Coolify → Environment Variables, then Redeploy):
 ```ini
 LANDING_URL=https://nextaierp.com          # the website allowed to call /v1/signup
 SIGNUP_ENABLED=true                        # false pauses signups
+# Own site per client (recommended):
+SIGNUP_ERP_MODE=auto                       # auto = own site when the provisioner is set, else shared; or site / shared
+PROVISIONER_URL=http://10.0.0.2:8099       # provisioner on the ERPNext host (infra/provisioner)
+PROVISIONER_SECRET=...                     # >= 32 chars, same value on the provisioner
+# Shared site (fallback, or SIGNUP_ERP_MODE=shared):
 ERPNEXT_SHARED_URL=https://books.nextaierp.com
 ERPNEXT_SHARED_API_KEY=...                 # API user with System Manager (it creates companies)
 ERPNEXT_SHARED_API_SECRET=...
 ```
 
+For **own sites**, the ERPNext host needs, once:
+- the provisioner running (`infra/provisioner/README.md`) with `PROVISIONER_SECRET` and `DB_ROOT_PASSWORD`,
+- the `nextai_provisioning` module on the bench's Python path (it creates the API user and runs the setup wizard),
+- the `india_compliance` app in the bench (`bench get-app india_compliance`) for Indian clients,
+- DNS `*.nextaierp.com` and a **wildcard** Cloudflare Tunnel route to the bench's nginx, so new sites answer
+  without a manual DNS step,
+- room for the sites: each one is a MariaDB database (~100–200 MB to start). The provisioner builds one site at a
+  time; signups queue behind each other automatically.
+
 - The shared site must have finished the ERPNext setup wizard (it provides the fiscal year and base data).
   For Indian clients install **India Compliance** there, so GST templates are created with each company.
-- Without `ERPNEXT_SHARED_*` signup still works; connect ERPNext per client in Admin → Integrations.
+- With neither the provisioner nor `ERPNEXT_SHARED_*`, signup still works; connect ERPNext per client in Admin → Integrations.
 - The website needs `PUBLIC_SIGNUP_ENDPOINT=https://api.nextaierp.com/v1/signup` (its default) and Resend
   configured on the API (the code is sent by email).
 

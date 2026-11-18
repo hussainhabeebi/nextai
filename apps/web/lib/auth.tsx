@@ -1,14 +1,14 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AppStyle, AppView } from '@nextai/shared';
 import { api, type Session } from './api';
 import { syncQueue } from './offline-queue';
 
 interface Me {
   user: { id: string; name: string; role: string; language: string } | null;
-  tenant: { id: string; name: string; slug: string; country: 'IN' | 'AE'; currency: 'INR' | 'AED'; language: string; status: string; appView?: AppView; appStyle?: AppStyle };
+  tenant: { id: string; name: string; slug: string; country: 'IN' | 'AE'; currency: 'INR' | 'AED'; language: string; status: string; appView?: AppView; appStyle?: AppStyle; setup?: { status: 'queued' | 'running' | 'ready' | 'failed'; step: string | null; site: string | null } | null };
 }
 
 const Ctx = createContext<{ session: Session | null; me: Me | null; switchTenant: (id: string) => Promise<void>; logout: () => Promise<void>; reloadMe: () => Promise<void> }>({
@@ -46,9 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setReady(true);
     });
   }, [router]);
-  const reloadMe = async () => {
+  const reloadMe = useCallback(async () => {
     setMe(await api.get<Me>('/v1/me'));
-  };
+  }, []);
   useEffect(() => {
     if (!session) return;
     void reloadMe();

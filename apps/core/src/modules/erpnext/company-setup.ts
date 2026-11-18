@@ -6,6 +6,17 @@ import { withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { sealErpKey, sealErpSecret } from '../tenants/secrets.js';
 import { clearAccountCache } from './mappers.js';
+import { provisionOwnSite } from '../provisioning/own-site.js';
+
+/** Which ERPNext setup a website signup gets (see SIGNUP_ERP_MODE). */
+export function signupErpMode(): 'site' | 'shared' | 'manual' {
+  const e = env();
+  const provisioner = !!(e.PROVISIONER_URL && e.PROVISIONER_SECRET);
+  const shared = !!(e.ERPNEXT_SHARED_URL && e.ERPNEXT_SHARED_API_KEY && e.ERPNEXT_SHARED_API_SECRET);
+  if (e.SIGNUP_ERP_MODE === 'site') return 'site';
+  if (e.SIGNUP_ERP_MODE === 'shared') return shared ? 'shared' : 'manual';
+  return provisioner ? 'site' : shared ? 'shared' : 'manual';
+}
 
 const COUNTRY_NAME = { IN: 'India', AE: 'United Arab Emirates' } as const;
 
@@ -42,6 +53,9 @@ type Company = { name: string; abbr: string; company_description?: string | null
  */
 export async function setupTenantErp(c: Container, tenantId: string, erpOverride?: ErpClient): Promise<{ status: string; note: string }> {
   const tenant: Tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: tenantId } }));
+  const setup = (tenant.settings as { erpSetup?: { mode?: string } } | null)?.erpSetup;
+  // A signup queued for its own site keeps that mode even if the platform setting changes meanwhile.
+  if (!erpOverride && (setup?.mode === 'site' || (!setup && !tenant.erpApiKeyEnc && signupErpMode() === 'site'))) return provisionOwnSite(c, tenantId);
   if (tenant.erpApiKeyEnc) return { status: 'skipped', note: 'ERPNext already connected' };
   const shared = sharedErp();
   if (!shared) return save(c, tenant, {}, 'manual', 'No shared ERPNext configured: connect ERPNext in Admin → Integrations');
