@@ -6,7 +6,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: { DEFAULT: '#0E7A6B', dark: '#0A5E52', light: '#E6F3F1', amber: '#F29F12' },
+        brand: {
+          // Themeable per tenant (Settings → App view & style); defaults are the original teal.
+          DEFAULT: 'rgb(var(--brand) / <alpha-value>)',
+          dark: 'rgb(var(--brand-dark) / <alpha-value>)',
+          light: 'rgb(var(--brand-light) / <alpha-value>)',
+          amber: '#F29F12',
+        },
         bg: 'rgb(var(--bg) / <alpha-value>)',
         card: 'rgb(var(--card) / <alpha-value>)',
         fg: 'rgb(var(--fg) / <alpha-value>)',

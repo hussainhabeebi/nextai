@@ -117,6 +117,37 @@ describe('customer app API', () => {
     expect(other.json().entries).toHaveLength(0);
   });
 
+  it('clinic & pharmacy views: settings, /me, quick sales paid at the counter, stock purchase', async () => {
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: auth(tokA) })).json().tenant).toMatchObject({ appView: 'general', appStyle: 'teal' });
+    const bad = await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(tokA), payload: { settings: { appView: 'hospital' } } });
+    expect(bad.statusCode).toBe(400);
+    await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(tokA), payload: { settings: { appView: 'clinic', appStyle: 'blue' } } });
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: auth(tokA) })).json().tenant).toMatchObject({ appView: 'clinic', appStyle: 'blue' });
+
+    const date = '2026-10-20';
+    const post = (url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: auth(tokA), payload: payload as object });
+    const bill = await post('/v1/quick-sales', { kind: 'patient_bill', party: 'Ravi', doctor: 'Dr. Meera', date, discount: 50, paymentMode: 'upi', lines: [{ description: 'Consultation', qty: 1, rate: 300 }, { description: 'Dressing', qty: 1, rate: 200 }] });
+    expect(bill.statusCode).toBe(201);
+    expect(bill.json().total).toBe(450);
+    expect(bill.json().invoice.payload.remarks).toBe('Patient bill · Dr Meera · Discount 50');
+    expect(bill.json().payment.payload).toMatchObject({ partyName: 'Ravi', total: 450, paymentMode: 'upi' });
+
+    const sale = await post('/v1/quick-sales', { kind: 'counter_sale', date, paymentMode: 'credit', lines: [{ description: 'Paracetamol 500', qty: 2, rate: 20, discountPct: 10, batch: 'B12', expiry: '2027-03' }] });
+    expect(sale.json()).toMatchObject({ total: 36, payment: null });
+    expect(sale.json().invoice.payload).toMatchObject({ partyName: 'Walk-in Customer' });
+    expect(sale.json().invoice.payload.lines[0]).toMatchObject({ description: 'Paracetamol 500 · Batch B12 · Exp 03/27 · MRP 20', rate: 18, amount: 36 });
+
+    const stock = await post('/v1/purchases', { supplier: 'Medi Distributors', date, itemsAccount: 'stock', lines: [{ description: 'Paracetamol 500 strip', qty: 10, rate: 12 }] });
+    expect(stock.json().payload.lines[0].account).toBe('Cost of Goods Sold - AIL');
+    const fee = await post('/v1/expenses', { description: 'Doctor fee — Dr Meera', amount: 1000, category: 'doctor_fees', date });
+    expect(fee.json().payload.expenseAccount).toBe('Salary - AIL');
+    await drain(c);
+
+    const r = (await app.inject({ method: 'GET', url: `/v1/daily-report?date=${date}`, headers: auth(tokA) })).json();
+    expect(r.totals).toMatchObject({ sales: 486, receipts: 450, cashIn: 450, purchases: 120, expenses: 1000 });
+    await app.inject({ method: 'PATCH', url: '/v1/settings', headers: auth(tokA), payload: { settings: { appView: 'general', appStyle: 'teal' } } });
+  });
+
   it('suspended tenants are read-only', async () => {
     await withSystemTx(c.prisma, (tx) => tx.tenant.update({ where: { id: B.tenant.id }, data: { status: 'suspended' } }));
     expect((await app.inject({ method: 'GET', url: '/v1/drafts', headers: auth(tokB) })).statusCode).toBe(200);

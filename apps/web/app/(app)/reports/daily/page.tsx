@@ -8,9 +8,18 @@ import { Button } from '@/components/ui/button';
 import { Card, Empty, Skeleton } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
-import { ENTRY_ACTIONS, KIND_LABEL, modeLabel, shiftDay, todayIso, type DailyReport, type EntryKind } from '@/lib/entries';
+import {
+  ENTRY_ACTIONS,
+  KIND_LABEL as BASE_LABEL,
+  modeLabel,
+  shiftDay,
+  todayIso,
+  type DailyReport,
+  type EntryKind,
+} from '@/lib/entries';
 import { money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
+import { useView } from '@/lib/views';
 
 const SUMMARY: Array<{ key: keyof DailyReport['totals']; label: string; kind: EntryKind }> = [
   { key: 'sales', label: 'Sales', kind: 'sale' },
@@ -23,20 +32,39 @@ const SUMMARY: Array<{ key: keyof DailyReport['totals']; label: string; kind: En
 const toneOf = (k: EntryKind) => ENTRY_ACTIONS.find((a) => a.kind === k)!.tone;
 
 export default function DailyReportPage() {
+  const { kindLabel, labels } = useView();
+  // Summary tiles keep their general wording unless the view renames the kind (e.g. "Patient bills").
+  const tileLabel = (s: (typeof SUMMARY)[number]) =>
+    kindLabel(s.kind) === BASE_LABEL[s.kind] ? s.label : `${kindLabel(s.kind)}s`;
   const [date, setDate] = useState(todayIso());
   const [filter, setFilter] = useState<EntryKind | 'all'>('all');
   const { data, loading, error, reload } = useApi<DailyReport>(`/v1/daily-report?date=${date}`);
   const cur = data?.currency;
   const rows = data?.entries.filter((e) => filter === 'all' || e.kind === filter) ?? [];
   const isToday = date === todayIso();
-  const pretty = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const pretty = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 
   const exportCsv = () => {
     if (!data) return;
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const csv = [
       ['Date', 'Type', 'Party', 'Description', 'Mode', 'Reference', 'ERP voucher', 'Status', 'Amount'],
-      ...data.entries.map((e) => [data.date, KIND_LABEL[e.kind], e.party, e.description, e.mode, e.reference, e.erpName, e.status, e.amount]),
+      ...data.entries.map((e) => [
+        data.date,
+        kindLabel(e.kind),
+        e.party,
+        e.description,
+        e.mode,
+        e.reference,
+        e.erpName,
+        e.status,
+        e.amount,
+      ]),
     ]
       .map((r) => r.map(esc).join(','))
       .join('\n');
@@ -49,13 +77,18 @@ export default function DailyReportPage() {
 
   return (
     <Page
-      title="Daily report"
+      title={labels.dailyReport}
       back="/reports"
       size="wide"
       onRefresh={reload}
       action={
         <div className="flex gap-2 print:hidden">
-          <Button variant="secondary" onClick={exportCsv} disabled={!data?.entries.length} aria-label="Export CSV">
+          <Button
+            variant="secondary"
+            onClick={exportCsv}
+            disabled={!data?.entries.length}
+            aria-label="Export CSV"
+          >
             <Download className="h-4 w-4" /> <span className="hidden sm:inline">CSV</span>
           </Button>
           <Button variant="secondary" onClick={() => window.print()} aria-label="Print">
@@ -65,11 +98,29 @@ export default function DailyReportPage() {
       }
     >
       <div className="mb-4 flex flex-wrap items-center gap-2 print:hidden">
-        <Button variant="secondary" size="icon" aria-label="Previous day" onClick={() => setDate(shiftDay(date, -1))}>
+        <Button
+          variant="secondary"
+          size="icon"
+          aria-label="Previous day"
+          onClick={() => setDate(shiftDay(date, -1))}
+        >
           <ChevronLeft className="h-5 w-5 rtl:rotate-180" />
         </Button>
-        <Input type="date" aria-label="Report date" className="w-auto" value={date} max={todayIso()} onChange={(e) => e.target.value && setDate(e.target.value)} />
-        <Button variant="secondary" size="icon" aria-label="Next day" disabled={isToday} onClick={() => setDate(shiftDay(date, 1))}>
+        <Input
+          type="date"
+          aria-label="Report date"
+          className="w-auto"
+          value={date}
+          max={todayIso()}
+          onChange={(e) => e.target.value && setDate(e.target.value)}
+        />
+        <Button
+          variant="secondary"
+          size="icon"
+          aria-label="Next day"
+          disabled={isToday}
+          onClick={() => setDate(shiftDay(date, 1))}
+        >
           <ChevronRight className="h-5 w-5 rtl:rotate-180" />
         </Button>
         {!isToday && (
@@ -84,10 +135,27 @@ export default function DailyReportPage() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {SUMMARY.map((s) => (
-          <button key={s.key} type="button" onClick={() => setFilter(filter === s.kind ? 'all' : s.kind)} className="text-start" aria-pressed={filter === s.kind}>
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => setFilter(filter === s.kind ? 'all' : s.kind)}
+            className="text-start"
+            aria-pressed={filter === s.kind}
+          >
             <Card className={cn('h-full p-3 transition', filter === s.kind && 'ring-2 ring-brand')}>
-              <span className={cn('inline-block rounded-md px-1.5 py-0.5 text-[11px] font-semibold', toneOf(s.kind))}>{s.label}</span>
-              {loading && !data ? <Skeleton className="mt-2 h-6 w-20" /> : <p className="mt-2 text-lg font-bold tabular-nums">{money(data?.totals[s.key], cur)}</p>}
+              <span
+                className={cn(
+                  'inline-block rounded-md px-1.5 py-0.5 text-[11px] font-semibold',
+                  toneOf(s.kind),
+                )}
+              >
+                {tileLabel(s)}
+              </span>
+              {loading && !data ? (
+                <Skeleton className="mt-2 h-6 w-20" />
+              ) : (
+                <p className="mt-2 text-lg font-bold tabular-nums">{money(data?.totals[s.key], cur)}</p>
+              )}
             </Card>
           </button>
         ))}
@@ -96,11 +164,15 @@ export default function DailyReportPage() {
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <Card className="p-3">
           <p className="text-xs text-muted">Money in</p>
-          <p className="mt-1 text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-300">{money(data?.totals.cashIn, cur)}</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
+            {money(data?.totals.cashIn, cur)}
+          </p>
         </Card>
         <Card className="p-3">
           <p className="text-xs text-muted">Money out</p>
-          <p className="mt-1 text-lg font-bold tabular-nums text-rose-700 dark:text-rose-300">{money(data?.totals.cashOut, cur)}</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-rose-700 dark:text-rose-300">
+            {money(data?.totals.cashOut, cur)}
+          </p>
         </Card>
         <Card className="bg-brand p-3 text-white">
           <p className="text-xs opacity-90">Net cash flow</p>
@@ -112,7 +184,7 @@ export default function DailyReportPage() {
       <Card className="mt-4 overflow-hidden p-0">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="font-semibold">
-            Day book {filter !== 'all' && <span className="text-muted">· {KIND_LABEL[filter]}s</span>}
+            Day book {filter !== 'all' && <span className="text-muted">· {kindLabel(filter)}s</span>}
           </h2>
           {filter !== 'all' && (
             <button className="text-sm font-medium text-brand print:hidden" onClick={() => setFilter('all')}>
@@ -146,7 +218,11 @@ export default function DailyReportPage() {
                 {rows.map((e) => (
                   <tr key={e.id}>
                     <td className="px-4 py-2.5">
-                      <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-semibold', toneOf(e.kind))}>{KIND_LABEL[e.kind]}</span>
+                      <span
+                        className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-semibold', toneOf(e.kind))}
+                      >
+                        {kindLabel(e.kind)}
+                      </span>
                     </td>
                     <td className="max-w-[320px] px-4 py-2.5">
                       <p className="truncate font-medium">{e.party ?? e.description}</p>
@@ -154,8 +230,16 @@ export default function DailyReportPage() {
                     </td>
                     <td className="px-4 py-2.5 text-muted">{modeLabel(e.mode) || '—'}</td>
                     <td className="px-4 py-2.5 text-muted">{e.reference ?? '—'}</td>
-                    <td className="px-4 py-2.5">{e.erpName ? <span className="text-muted">{e.erpName}</span> : <StatusBadge status={e.status} />}</td>
-                    <td className="px-4 py-2.5 text-end font-semibold tabular-nums">{money(e.amount, cur)}</td>
+                    <td className="px-4 py-2.5">
+                      {e.erpName ? (
+                        <span className="text-muted">{e.erpName}</span>
+                      ) : (
+                        <StatusBadge status={e.status} />
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-end font-semibold tabular-nums">
+                      {money(e.amount, cur)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -164,7 +248,12 @@ export default function DailyReportPage() {
                   <td colSpan={5} className="px-4 py-2.5 font-semibold">
                     {rows.length} entr{rows.length === 1 ? 'y' : 'ies'}
                   </td>
-                  <td className="px-4 py-2.5 text-end font-bold tabular-nums">{money(rows.reduce((s, e) => s + e.amount, 0), cur)}</td>
+                  <td className="px-4 py-2.5 text-end font-bold tabular-nums">
+                    {money(
+                      rows.reduce((s, e) => s + e.amount, 0),
+                      cur,
+                    )}
+                  </td>
                 </tr>
               </tfoot>
             </table>
@@ -173,9 +262,15 @@ export default function DailyReportPage() {
               {rows.map((e) => (
                 <li key={e.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
-                    <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-semibold', toneOf(e.kind))}>{KIND_LABEL[e.kind]}</span>
+                    <span
+                      className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-semibold', toneOf(e.kind))}
+                    >
+                      {kindLabel(e.kind)}
+                    </span>
                     <p className="mt-1 truncate text-sm font-medium">{e.party ?? e.description}</p>
-                    <p className="truncate text-xs text-muted">{[modeLabel(e.mode), e.reference, e.erpName].filter(Boolean).join(' · ')}</p>
+                    <p className="truncate text-xs text-muted">
+                      {[modeLabel(e.mode), e.reference, e.erpName].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
                   <span className="shrink-0 font-semibold tabular-nums">{money(e.amount, cur)}</span>
                 </li>

@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { Page } from '@/components/page';
 import { Card, Skeleton } from '@/components/ui/card';
 import { cn } from '@/lib/cn';
-import { ENTRY_ACTIONS, KIND_LABEL, modeLabel, todayIso, type DailyReport } from '@/lib/entries';
+import { modeLabel, todayIso, type DailyReport } from '@/lib/entries';
+import { useView } from '@/lib/views';
 import { compact, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useI18n } from '@/lib/i18n';
@@ -27,6 +28,7 @@ interface Dashboard {
 export default function Home() {
   const { t } = useI18n();
   const { data: d, loading, reload } = useApi<Dashboard>('/v1/dashboard');
+  const { actions, kindLabel, labels } = useView();
   const day = useApi<DailyReport>(`/v1/daily-report?date=${todayIso()}`);
   const cur = d?.currency ?? 'INR';
   const tiles = d && [
@@ -41,8 +43,8 @@ export default function Home() {
     <Page title={t('nav.home')} onRefresh={() => Promise.all([reload(), day.reload()])} size="wide">
       <section aria-label="New entry" className="mb-4">
         <h2 className="mb-2 text-sm font-semibold text-muted">New entry</h2>
-        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7 lg:gap-3">
-          {ENTRY_ACTIONS.map((a) => (
+        <div className={cn('grid grid-cols-4 gap-2 lg:gap-3', actions.length > 7 ? 'sm:grid-cols-8' : 'sm:grid-cols-7')}>
+          {actions.map((a) => (
             <Link key={a.href} href={a.href} className="group flex flex-col items-center gap-1.5 rounded-2xl border border-line bg-card px-1 py-3 text-center shadow-sm transition hover:border-brand active:scale-[0.98] lg:items-start lg:px-4 lg:text-start">
               <span className={cn('inline-flex h-10 w-10 items-center justify-center rounded-xl', a.tone)}>
                 <a.icon className="h-5 w-5" />
@@ -100,7 +102,7 @@ export default function Home() {
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
             <h2 className="font-semibold">Today</h2>
             <Link href="/reports/daily" className="text-sm font-medium text-brand">
-              Daily report →
+              {labels.dailyReport} →
             </Link>
           </div>
           {day.data && (
@@ -136,7 +138,7 @@ export default function Home() {
                   <li key={e.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{e.party ?? e.description}</p>
-                      <p className="text-xs text-muted">{KIND_LABEL[e.kind]}{e.mode ? ` · ${modeLabel(e.mode)}` : ''}</p>
+                      <p className="text-xs text-muted">{kindLabel(e.kind)}{e.mode ? ` · ${modeLabel(e.mode)}` : ''}</p>
                     </div>
                     <span className="shrink-0 text-sm font-semibold tabular-nums">{money(e.amount, cur)}</span>
                   </li>

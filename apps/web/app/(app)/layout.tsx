@@ -3,11 +3,11 @@
 import { BarChart3, Bot, Camera, CheckCircle2, CreditCard, Home, Landmark, Menu, Receipt, Settings, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { LogoPrimary } from '@/components/brand';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
-import { ENTRY_ACTIONS } from '@/lib/entries';
+import { STYLES, useView, viewOf } from '@/lib/views';
 import { useOnline } from '@/lib/hooks';
 import { useI18n } from '@/lib/i18n';
 
@@ -21,6 +21,7 @@ const isImpersonating = (token: string) => {
 
 function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
   const { t } = useI18n();
+  const { actions, labels } = useView();
   const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
   const groups: Array<{ title?: string; items: Array<{ href: string; label: string; icon: typeof Home; badge?: number }> }> = [
     {
@@ -30,19 +31,19 @@ function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
         { href: '/approvals', label: t('nav.approvals'), icon: CheckCircle2, badge: approvals },
       ],
     },
-    { title: 'New entry', items: ENTRY_ACTIONS.filter((a) => a.kind !== 'daily').map((a) => ({ href: a.href, label: a.label, icon: a.icon })) },
+    { title: 'New entry', items: actions.filter((a) => a.kind !== 'daily').map((a) => ({ href: a.href, label: a.label, icon: a.icon })) },
     {
       title: 'Books',
       items: [
-        { href: '/sales', label: 'Sales invoices', icon: Receipt },
+        { href: '/sales', label: labels.salesList, icon: Receipt },
         { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
-        { href: '/parties', label: 'Customers & suppliers', icon: Users },
+        { href: '/parties', label: labels.parties, icon: Users },
       ],
     },
     {
       title: 'Reports',
       items: [
-        { href: '/reports/daily', label: 'Daily report', icon: ENTRY_ACTIONS.find((a) => a.kind === 'daily')!.icon },
+        { href: '/reports/daily', label: labels.dailyReport, icon: actions.find((a) => a.kind === 'daily')!.icon },
         { href: '/reports', label: 'Financial reports', icon: BarChart3 },
         { href: '/tax', label: 'Tax centre', icon: Landmark },
         { href: '/ask', label: 'Ask your books', icon: Bot },
@@ -97,11 +98,22 @@ function Shell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { me, session, switchTenant } = useAuth();
   const online = useOnline();
+  const { labels } = useView();
+  // Tenant colour theme (Settings → App view & style). Teal = the original defaults in globals.css.
+  const style = me?.tenant.appStyle ?? 'teal';
+  useEffect(() => {
+    const s = STYLES[style] ?? STYLES.teal;
+    const root = document.documentElement.style;
+    root.setProperty('--brand', s.brand);
+    root.setProperty('--brand-dark', s.dark);
+    root.setProperty('--brand-light', s.light);
+    document.documentElement.dataset.view = viewOf(me?.tenant.appView);
+  }, [style, me?.tenant.appView]);
   const tabs = [
     { href: '/', label: t('nav.home'), icon: Home },
     { href: '/capture', label: t('nav.capture'), icon: Camera },
     { href: '/approvals', label: t('nav.approvals'), icon: CheckCircle2 },
-    { href: '/sales', label: t('nav.sales'), icon: Receipt },
+    labels.salesTab ? { ...labels.salesTab, icon: Receipt } : { href: '/sales', label: t('nav.sales'), icon: Receipt },
     { href: '/more', label: t('nav.more'), icon: Menu },
   ];
   return (

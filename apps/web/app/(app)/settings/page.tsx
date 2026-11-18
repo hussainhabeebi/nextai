@@ -1,8 +1,8 @@
 'use client';
 
-import { UserPlus } from 'lucide-react';
+import { Check, UserPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { Language, TenantSettings } from '@nextai/shared';
+import { APP_STYLES, APP_VIEWS, type Language, type TenantSettings } from '@nextai/shared';
 import { Page } from '@/components/page';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, Skeleton } from '@/components/ui/card';
@@ -11,13 +11,15 @@ import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { useI18n } from '@/lib/i18n';
+import { cn } from '@/lib/cn';
+import { STYLES, VIEWS } from '@/lib/views';
 
 type SettingsDto = { name: string; country: string; currency: string; language: Language; settings: TenantSettings };
 type Member = { id: string; name: string; phone: string; role: string; status: string };
 
 export default function SettingsPage() {
   const { setLang } = useI18n();
-  const { me } = useAuth();
+  const { me, reloadMe } = useAuth();
   const isOwner = me?.user?.role === 'owner';
   const { data } = useApi<SettingsDto>('/v1/settings');
   const team = useApi<{ items: Member[] }>('/v1/team');
@@ -41,9 +43,12 @@ export default function SettingsPage() {
           bank: form.settings.bank,
           reminders: form.settings.reminders,
           dailySummary: form.settings.dailySummary,
+          appView: form.settings.appView,
+          appStyle: form.settings.appStyle,
         },
       });
       setLang(form.language);
+      await reloadMe();
       setMsg('Saved ✅');
     } catch (e) {
       setMsg((e as ApiError).message);
@@ -65,6 +70,56 @@ export default function SettingsPage() {
   return (
     <Page title="Settings" back="/more">
       <fieldset disabled={!isOwner} className="space-y-4">
+        <Card className="space-y-4">
+          <div>
+            <h2 className="font-semibold">App view &amp; style</h2>
+            <p className="text-sm text-muted">Choose the screens and entry options that fit your business. Your books stay the same.</p>
+          </div>
+          <div role="radiogroup" aria-label="App view" className="grid gap-2 sm:grid-cols-3">
+            {APP_VIEWS.map((v) => {
+              const meta = VIEWS[v];
+              const on = (s.appView ?? 'general') === v;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => set(on ? {} : { appView: v, appStyle: meta.suggestedStyle })}
+                  className={cn('rounded-xl border p-3 text-start transition', on ? 'border-brand bg-brand-light dark:bg-brand/20' : 'border-line hover:bg-bg')}
+                >
+                  <span className="flex items-center gap-2 font-semibold">
+                    <meta.icon className={cn('h-5 w-5', on ? 'text-brand' : 'text-muted')} /> {meta.label}
+                    {on && <Check className="ms-auto h-4 w-4 text-brand" />}
+                  </span>
+                  <span className="mt-1 block text-xs text-muted">{meta.description}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium">Colour style</p>
+            <div role="radiogroup" aria-label="Colour style" className="flex flex-wrap gap-2">
+              {APP_STYLES.map((st) => {
+                const on = (s.appStyle ?? 'teal') === st;
+                return (
+                  <button
+                    key={st}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => set({ appStyle: st })}
+                    className={cn('inline-flex min-h-10 items-center gap-2 rounded-full border px-3 text-sm', on ? 'border-fg font-semibold' : 'border-line')}
+                  >
+                    <span className="h-5 w-5 rounded-full" style={{ background: `rgb(${STYLES[st].brand})` }} aria-hidden="true" />
+                    {STYLES[st].label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {!isOwner && <p className="text-xs text-muted">Only the business owner can change this.</p>}
+        </Card>
         <Card className="space-y-4">
           <h2 className="font-semibold">Business profile</h2>
           <Field label="Business name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>

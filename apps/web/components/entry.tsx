@@ -2,10 +2,19 @@
 
 import { CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { Page } from '@/components/page';
 import { Badge, Card, Skeleton } from '@/components/ui/card';
-import { ENTRY_ACTIONS, modeLabel, todayIso, type DailyReport, type EntryKind } from '@/lib/entries';
+import {
+  KIND_LABEL,
+  modeLabel,
+  todayIso,
+  type DailyEntry,
+  type DailyReport,
+  type EntryKind,
+} from '@/lib/entries';
+import { useView } from '@/lib/views';
 import { money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { cn } from '@/lib/cn';
@@ -32,14 +41,28 @@ export function EntryLayout({
   title,
   kind,
   today,
+  match,
+  todayTitle,
+  panel = 'side',
   children,
 }: {
   title: string;
   kind: EntryKind;
   today: ReturnType<typeof useToday>;
+  /** Narrow the "today" panel further, e.g. doctor payouts among expenses */
+  match?: (e: DailyEntry) => boolean;
+  todayTitle?: string;
+  /** Wide forms (medicine tables) take the full width and show the today panel underneath */
+  panel?: 'side' | 'below';
   children: ReactNode;
 }) {
-  const rows = today.data?.entries.filter((e) => e.kind === kind) ?? [];
+  const path = usePathname();
+  const { actions, kindLabel, view } = useView();
+  const plural =
+    view === 'general' || kindLabel(kind) === KIND_LABEL[kind]
+      ? PLURAL[kind]
+      : `${kindLabel(kind).toLowerCase()}s`;
+  const rows = today.data?.entries.filter((e) => e.kind === kind && (!match || match(e))) ?? [];
   const total = rows.reduce((s, e) => s + e.amount, 0);
   return (
     <Page title={title} back="/" size="wide">
@@ -47,14 +70,14 @@ export function EntryLayout({
         aria-label="Voucher type"
         className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:px-0"
       >
-        {ENTRY_ACTIONS.map((a) => (
+        {actions.map((a) => (
           <Link
             key={a.href}
             href={a.href}
-            aria-current={a.kind === kind ? 'page' : undefined}
+            aria-current={a.href === path ? 'page' : undefined}
             className={cn(
               'inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm font-medium',
-              a.kind === kind
+              a.href === path
                 ? 'border-brand bg-brand text-white'
                 : 'border-line bg-card text-muted hover:text-fg',
             )}
@@ -63,12 +86,12 @@ export function EntryLayout({
           </Link>
         ))}
       </nav>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className={cn('grid gap-4', panel === 'side' && 'lg:grid-cols-[minmax(0,1fr)_340px]')}>
         <Card className="lg:p-6">{children}</Card>
         <aside>
           <Card className="p-0">
             <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <h2 className="text-sm font-semibold">Today&apos;s {PLURAL[kind]}</h2>
+              <h2 className="text-sm font-semibold">{todayTitle ?? <>Today&apos;s {plural}</>}</h2>
               <span className="text-sm font-bold tabular-nums">{money(total, today.data?.currency)}</span>
             </div>
             {today.loading && !today.data ? (
