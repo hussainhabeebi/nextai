@@ -258,13 +258,19 @@ export async function answerBankLine(ctx: BotContext, lineId: string, text: stri
   } else {
     intent = { intent: 'record_expense', confidence: 1, entities: { ...base, description: reply } };
   }
+  await linkDraftToBankLine(ctx, line.id, () => run(intent));
+}
+
+/** Run a step of the flow and, if it drafted an entry, tie that entry to the bank line (matched once it posts). */
+export async function linkDraftToBankLine(ctx: BotContext, lineId: string, step: () => Promise<void>): Promise<void> {
+  const db = tenantDb(ctx.c.prisma, ctx.tenant.id);
   const before = await db.draft.findFirst({ where: { conversationId: ctx.conversationId }, orderBy: { createdAt: 'desc' }, select: { id: true } });
-  await run(intent);
+  await step();
   const made = await db.draft.findFirst({ where: { conversationId: ctx.conversationId }, orderBy: { createdAt: 'desc' }, select: { id: true } });
   if (made && made.id !== before?.id) {
-    await db.bankLine.update({ where: { id: line.id }, data: { status: 'suggested', draftId: made.id, matchType: 'Draft', matchName: null } }); // matched once it posts
+    await db.bankLine.update({ where: { id: lineId }, data: { status: 'suggested', draftId: made.id, matchType: 'Draft', matchName: null } });
   } else {
-    logger.info({ tenantId: tenant.id, lineId }, 'bank answer did not create an entry yet (more details asked)');
+    logger.info({ tenantId: ctx.tenant.id, lineId }, 'bank answer did not create an entry yet (more details asked)');
   }
 }
 

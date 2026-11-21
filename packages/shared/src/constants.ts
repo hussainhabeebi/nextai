@@ -50,6 +50,7 @@ export const INTENTS = [
   'send_reminder',
   'add_party',
   'add_account',
+  'add_employee',
   'briefing',
   'bank',
   'help',

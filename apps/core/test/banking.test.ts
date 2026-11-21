@@ -131,6 +131,8 @@ describe('bank matching', () => {
     await say('Rs 5,000.00 credited to your A/c XX1234 on 17-11-26 from SHOP 24 UPI Ref 112233445566', id2);
     expect(cw().lastText(id2)).toMatch(/₹5,000.00 received on 17 Nov\n“SHOP 24”[\s\S]*who paid/);
     await say('Shop 24', id2);
+    expect(cw().lastText(id2)).toMatch(/"Shop 24" is not in your customer list/);
+    await say('new', id2);
     expect(cw().lastText(id2)).toMatch(/Payment received[\s\S]*Customer: Shop 24[\s\S]*Paid by: bank/);
     await say('1', id2);
 
