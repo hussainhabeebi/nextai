@@ -1,7 +1,7 @@
 import { parseChoice } from '@nextai/chatwoot-client';
 import { QUEUES, formatMoney, t, type Currency, type DraftPayload, type IntentResult } from '@nextai/shared';
 import { ruleClassify } from '../../ai/index.js';
-import { KIND_CHOICES, cleanName, normalizeKind } from '../../ai/rules.js';
+import { DATE_RE, KIND_CHOICES, cleanName, normalizeKind, parseDate } from '../../ai/rules.js';
 import { ErpError } from '@nextai/erpnext-client';
 import { audit } from '../audit/audit.js';
 import { tenantDb } from '../../lib/db.js';
@@ -12,10 +12,12 @@ import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, s
 import { account, erpContext, expenseLedgers, findLedger } from '../erpnext/mappers.js';
 import { chooseExpenseAccount } from '../erpnext/expense-account.js';
 import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind, ledgerTarget } from '../erpnext/create-account.js';
+import { createEmployee, normalizeGender } from '../erpnext/create-employee.js';
+import { NEW_PARTY, partyChoices, partyQuestion, resolveParty, type PartyKind, type PartyResolution } from '../parties/resolve.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 import { buildBriefing } from '../briefing/briefing.js';
-import { answerBankLine, askNextBankLine, importLines, matchLines, tenantToday } from '../banking/service.js';
+import { answerBankLine, askNextBankLine, importLines, linkDraftToBankLine, matchLines, tenantToday } from '../banking/service.js';
 import { parseBankSms } from '../banking/parse.js';
 
 /**
@@ -69,8 +71,34 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
     return applyEditAndResend(ctx, state.draftId, patch);
   }
 
+  if (state.step === 'awaiting_party' && state.choices && state.field) {
+    // Answer to "which customer did you mean?": a number, the start of a listed name, "add new", or another name.
+    if (['cancel', 'stop', 'no'].includes(lower)) {
+      await c.conversations.clear(tenant.id, conversationId);
+      return say(ctx, t(ctx.lang, 'bot.cancelled'));
+    }
+    const kind = state.field as PartyKind;
+    const query = String(state.partial?.party ?? '');
+    const pick = /^(new|add|add new|add it|create|create new|create it|yes add)$/.test(lower) ? NEW_PARTY : parseChoice(text, state.choices);
+    let party: string;
+    if (pick === NEW_PARTY) party = query;
+    else if (pick) party = pick;
+    else {
+      const res = await resolveParty(c, tenant, kind, text);
+      if (res.status === 'matched') party = res.name;
+      else if (res.status === 'unavailable') party = res.query;
+      else return askParty(ctx, res, kind, { pendingIntent: state.pendingIntent, draftId: state.draftId, bankLineId: state.bankLineId, partial: { ...(state.partial ?? {}), party: res.query } });
+    }
+    if (state.draftId) return applyEditAndResend(ctx, state.draftId, { partyName: party }, true);
+    await c.conversations.set(tenant.id, conversationId, { step: 'idle' });
+    if (!state.pendingIntent) return;
+    const next = () => runIntent(ctx, { intent: state.pendingIntent!, confidence: 1, entities: { ...(state.partial ?? {}), party } as IntentResult['entities'] }, { partyChecked: true });
+    return state.bankLineId ? linkDraftToBankLine(ctx, state.bankLineId, next) : next();
+  }
+
   if (state.step === 'awaiting_field' && state.field === 'bankline' && state.partial?.lineId) {
-    return answerBankLine(ctx, String(state.partial.lineId), text, (i) => runIntent(ctx, i));
+    const lineId = String(state.partial.lineId);
+    return answerBankLine(ctx, lineId, text, (i) => runIntent(ctx, i, { bankLineId: lineId }));
   }
 
   if (state.step === 'awaiting_field' && state.pendingIntent && state.field) {
@@ -85,6 +113,15 @@ export async function handleText(ctx: BotContext, text: string): Promise<void> {
       const n = Number(text.replace(/[^\d.]/g, ''));
       if (!(n > 0)) return say(ctx, t(ctx.lang, 'bot.missingField', { field: 'amount' }));
       partial.amount = n;
+    } else if (state.field === 'gender') {
+      const g = normalizeGender(text);
+      if (!g) return say(ctx, 'Please reply 1 for Female, 2 for Male or 3 for Other.');
+      partial.gender = g;
+    } else if (state.field === 'birthDate' || state.field === 'joiningDate') {
+      const d = parseDate(text);
+      if (!d) return say(ctx, 'Please send the date like 15/03/1995 or "18 Nov 2026".');
+      if (state.field === 'birthDate' && d >= new Date().toISOString().slice(0, 10)) return say(ctx, 'That date of birth is not in the past. Please send it again, e.g. 15/03/1995.');
+      partial[state.field] = d;
     } else {
       partial.party = text.trim();
     }
@@ -120,8 +157,21 @@ async function learnedAccount(c: BotContext['c'], tenantId: string, party?: stri
   return hit?.expenseAccount;
 }
 
-async function applyEditAndResend(ctx: BotContext, draftId: string, patch: Partial<DraftPayload>) {
+/** Which party list a draft's customer/supplier must come from. */
+const PARTY_OF_DRAFT: Partial<Record<string, PartyKind>> = { sales_invoice: 'Customer', payment_in: 'Customer', purchase_invoice: 'Supplier', payment_out: 'Supplier' };
+
+async function applyEditAndResend(ctx: BotContext, draftId: string, patch: Partial<DraftPayload>, partyChecked = false) {
   const { c, tenant, conversationId } = ctx;
+  if (patch.partyName && !partyChecked) {
+    // "customer Orbit": pick the real customer/supplier from ERPNext, or ask which one was meant.
+    const kind = PARTY_OF_DRAFT[(await getDraft(c, tenant.id, draftId)).type];
+    if (kind) {
+      const res = await resolveParty(c, tenant, kind, patch.partyName);
+      if (res.status === 'matched') patch.partyName = res.name;
+      else if (res.status === 'unavailable') patch.partyName = res.query;
+      else return askParty(ctx, res, kind, { draftId, partial: { party: res.query } });
+    }
+  }
   if (patch.expenseAccount) {
     // "account software" → the real ledger "Software Subscriptions - ATL"; unknown names get a list to choose from.
     let ledgers: string[] = [];
@@ -222,6 +272,64 @@ async function addAccount(ctx: BotContext, intent: IntentResult): Promise<void> 
   }
 }
 
+/** Ask which customer/supplier was meant, offering the closest ERPNext matches and "add as new". */
+async function askParty(
+  ctx: BotContext,
+  res: Exclude<PartyResolution, { status: 'matched' } | { status: 'unavailable' }>,
+  kind: PartyKind,
+  state: { pendingIntent?: IntentResult['intent']; draftId?: string; bankLineId?: string; partial: Record<string, unknown> },
+): Promise<void> {
+  const choices = partyChoices(res, kind);
+  await ctx.c.conversations.set(ctx.tenant.id, ctx.conversationId, { step: 'awaiting_party', field: kind, choices, ...state });
+  const hint = `\n\nReply with a number, or type the correct ${kind.toLowerCase()} name.`;
+  await ctx.c.chatwoot(ctx.tenant).sendChoices(ctx.conversationId, partyQuestion(res, kind) + hint, choices);
+}
+
+/**
+ * The customer/supplier must be one from the tenant's ERPNext list. Returns the ERPNext name to use, or undefined
+ * when the name was unclear and the user has been asked to choose (the flow continues with their answer).
+ */
+async function checkParty(ctx: BotContext, intent: IntentResult, kind: PartyKind, opts: RunOptions): Promise<string | undefined> {
+  const typed = intent.entities.party!;
+  if (opts.partyChecked) return typed;
+  const res = await resolveParty(ctx.c, ctx.tenant, kind, typed);
+  if (res.status === 'matched') return res.name;
+  if (res.status === 'unavailable') return res.query; // ERPNext down: keep the name; posting checks it again
+  await askParty(ctx, res, kind, { pendingIntent: intent.intent, bankLineId: opts.bankLineId, partial: { ...intent.entities, party: res.query } });
+  return undefined;
+}
+
+async function askField(ctx: BotContext, intent: IntentResult, field: string, question: string) {
+  await ctx.c.conversations.set(ctx.tenant.id, ctx.conversationId, { step: 'awaiting_field', pendingIntent: intent.intent, field, partial: intent.entities as Record<string, unknown> });
+  await say(ctx, question);
+}
+
+/** "Create employee Sona C": ERPNext needs gender, date of birth and date of joining, asked one at a time when missing. */
+async function addEmployee(ctx: BotContext, intent: IntentResult): Promise<void> {
+  const { c, tenant } = ctx;
+  const e = intent.entities;
+  const name = cleanName(e.party ?? '');
+  if (!name) return askFor(ctx, intent, 'party', 'employee name');
+  if (ctx.user.role === 'staff') return say(ctx, `Only the owner or your accountant can add employees. Please ask them to send "create employee ${name}".`);
+  const named = { ...intent, entities: { ...e, party: name } };
+  const gender = normalizeGender(e.gender);
+  if (!gender) return askField(ctx, named, 'gender', `Adding employee ${name}.\nGender?\n1. Female\n2. Male\n3. Other`);
+  if (!e.birthDate) return askField(ctx, named, 'birthDate', `What is ${name}'s date of birth? (e.g. 15/03/1995)`);
+  if (!e.joiningDate) return askField(ctx, named, 'joiningDate', `When did ${name} join? Reply "today" or a date like 01/11/2026.`);
+  try {
+    const r = await createEmployee(c, tenant, { name, gender, birthDate: e.birthDate, joiningDate: e.joiningDate });
+    if (!r.created) return say(ctx, `${name} is already in your employee list (${r.name}). Nothing new was added.`);
+    await audit(c.prisma, { tenantId: tenant.id, actorId: ctx.user.id, actorType: 'user', channel: 'whatsapp', action: 'employee.create', entity: 'employee', entityId: r.name, after: { name, gender, birthDate: e.birthDate, joiningDate: e.joiningDate } });
+    return say(ctx, `✅ Employee "${name}" added to ERPNext (${r.name}).\nGender: ${gender} · Born: ${e.birthDate} · Joined: ${e.joiningDate}`);
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'create employee failed');
+    const why = err instanceof ErpError ? ` ERPNext said: ${err.userMessage}` : '';
+    return say(ctx, `Sorry, I couldn't add ${name} right now.${why}`);
+  } finally {
+    await c.conversations.set(tenant.id, ctx.conversationId, { step: 'idle' });
+  }
+}
+
 async function askFor(ctx: BotContext, intent: IntentResult, field: 'amount' | 'party', label: string) {
   await ctx.c.conversations.set(ctx.tenant.id, ctx.conversationId, {
     step: 'awaiting_field',
@@ -232,9 +340,28 @@ async function askFor(ctx: BotContext, intent: IntentResult, field: 'amount' | '
   await say(ctx, t(ctx.lang, 'bot.missingField', { field: label }));
 }
 
-export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<void> {
-  const { c, tenant } = ctx;
+export interface RunOptions {
+  /** The party was already picked from the ERPNext list (or chosen as new) by the user. */
+  partyChecked?: boolean;
+  /** Drafting an answer to this bank line (kept if a question has to be asked first). */
+  bankLineId?: string;
+}
+
+/** "Orbit Travels on nov 18" → party "Orbit Travels", date 2026-11-18 (when the classifier left the date on the name). */
+function splitDateFromParty(intent: IntentResult): IntentResult {
   const e = intent.entities;
+  if (!e.party) return intent;
+  const m = e.party.match(DATE_RE);
+  const date = m ? parseDate(m[1]!) : undefined;
+  if (!m || !date) return intent;
+  const party = e.party.replace(m[0], ' ').replace(/\s+/g, ' ').replace(/[\s,;:-]+$/, '').trim();
+  return party ? { ...intent, entities: { ...e, party, date: e.date ?? date } } : intent;
+}
+
+export async function runIntent(ctx: BotContext, rawIntent: IntentResult, opts: RunOptions = {}): Promise<void> {
+  const { c, tenant } = ctx;
+  const intent = splitDateFromParty(rawIntent);
+  const e = { ...intent.entities };
   const today = new Date().toISOString().slice(0, 10);
   const currency = tenant.currency as Currency; // books are kept in the business currency
   const money = ['record_expense', 'record_sale', 'payment_in', 'payment_out', 'record_purchase', 'sales_return', 'purchase_return', 'transfer'].includes(intent.intent);
@@ -249,6 +376,11 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
   switch (intent.intent) {
     case 'record_expense': {
       if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
+      if (e.party) {
+        const party = await checkParty(ctx, intent, 'Supplier', opts);
+        if (!party) return;
+        e.party = party;
+      }
       const desc = e.description ?? 'Expense';
       const payload: DraftPayload = {
         partyName: e.party,
@@ -267,6 +399,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
     case 'record_sale': {
       if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
       if (!e.party) return askFor(ctx, intent, 'party', 'customer name');
+      const customer = await checkParty(ctx, intent, 'Customer', opts);
+      if (!customer) return;
+      e.party = customer;
       const due = new Date(Date.now() + 15 * 86400_000).toISOString().slice(0, 10);
       const payload: DraftPayload = {
         partyName: e.party,
@@ -308,6 +443,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
         await createDraft(c, tenant, { ...base, type: 'journal_entry', payload, confidence: intent.confidence });
         return;
       }
+      const party = await checkParty(ctx, intent, direction === 'in' ? 'Customer' : 'Supplier', opts);
+      if (!party) return;
+      e.party = party;
       const payload: DraftPayload = {
         partyName: e.party,
         date: e.date ?? today,
@@ -325,6 +463,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
       // A supplier bill (Purchase Invoice) or a return to the supplier (debit note: a Purchase Invoice with is_return).
       if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
       if (!e.party) return askFor(ctx, intent, 'party', 'supplier name');
+      const supplier = await checkParty(ctx, intent, 'Supplier', opts);
+      if (!supplier) return;
+      e.party = supplier;
       const isReturn = intent.intent === 'purchase_return';
       const desc = e.description ?? (isReturn ? 'Goods returned' : 'Purchase');
       const payload: DraftPayload = {
@@ -347,6 +488,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
       // Goods returned by a customer: an ERPNext credit note (Sales Invoice with is_return).
       if (!e.amount) return askFor(ctx, intent, 'amount', 'amount');
       if (!e.party) return askFor(ctx, intent, 'party', 'customer name');
+      const customer = await checkParty(ctx, intent, 'Customer', opts);
+      if (!customer) return;
+      e.party = customer;
       const payload: DraftPayload = {
         partyName: e.party,
         date: e.date ?? today,
@@ -395,6 +539,9 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
     }
     case 'send_reminder': {
       if (!e.party) return askFor(ctx, intent, 'party', 'customer name');
+      const customer = await checkParty(ctx, intent, 'Customer', opts);
+      if (!customer) return;
+      e.party = customer;
       await c.queue.enqueue(QUEUES.outboundReminder, { tenantId: tenant.id, party: e.party, requestedBy: ctx.user.id, conversationId: ctx.conversationId });
       await say(ctx, `⏰ Sending a payment reminder to ${e.party}.`);
       return;
@@ -402,6 +549,8 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
     case 'add_party':
     case 'add_account':
       return addAccount(ctx, intent);
+    case 'add_employee':
+      return addEmployee(ctx, intent);
     case 'briefing':
       return say(ctx, (await buildBriefing(c, tenant)).text);
     case 'bank':

@@ -6,16 +6,34 @@ const MODES: Record<string, string> = {
 };
 const MODE_RE = /\b(?:by|via|through|thru|using|in|with|from|on)\s+(?:my\s+|the\s+|a\s+)?(bank transfer|credit card|debit card|cash|bank|transfer|cheque|check|neft|imps|rtgs|card|upi|gpay|phonepe|paytm|credit)\b/;
 /** "date: 15/11/2026", "on 2026-11-15", "15-11-26", "yesterday" → YYYY-MM-DD (day first, as written in IN/AE). */
-const DATE_RE = /\b(?:date\s*[:=-]?\s*|dated\s+|on\s+)?(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|yesterday|today)\b/;
+const MONTHS = String.raw`(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?`;
+const ORD = String.raw`(?:st|nd|rd|th)?`;
+/** Also "nov 18", "18 Nov", "18th november 2026", "Nov 18, 2026". */
+export const DATE_RE = new RegExp(
+  String.raw`\b(?:date\s*[:=-]?\s*|dated\s+|on\s+(?:the\s+)?)?(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|yesterday|today|${MONTHS}\s+\d{1,2}${ORD}(?:,?\s+20[2-3]\d)?|\d{1,2}${ORD}\s+(?:of\s+)?${MONTHS}(?:,?\s+20[2-3]\d)?)(?![\w/.-]*\d)\b`,
+  'i',
+);
+const MONTH_NO: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
-export function parseDate(s: string, now = new Date()): string | undefined {
+export function parseDate(raw: string, now = new Date()): string | undefined {
   const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const s = raw.trim().toLowerCase();
   if (s === 'today') return iso(now);
   if (s === 'yesterday') return iso(new Date(now.getTime() - 86400_000));
   let y: number, m: number, d: number;
   const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const named = s.toLowerCase().match(/^([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?$/) ??
+    s.toLowerCase().match(/^(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]{3})[a-z]*\.?(?:,?\s+(\d{4}))?$/);
   if (ymd) [y, m, d] = [Number(ymd[1]), Number(ymd[2]), Number(ymd[3])];
-  else {
+  else if (named) {
+    const [a, b] = /^\d/.test(named[1]!) ? [named[2]!, named[1]!] : [named[1]!, named[2]!];
+    m = MONTH_NO[a]!;
+    d = Number(b);
+    if (!m) return undefined;
+    y = named[3] ? Number(named[3]) : now.getUTCFullYear();
+    // "dec 20" written in January means last December, not a date eleven months ahead.
+    if (!named[3] && Date.UTC(y, m - 1, d) > now.getTime() + 31 * 86400_000) y -= 1;
+  } else {
     const dmy = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
     if (!dmy) return undefined;
     [d, m, y] = [Number(dmy[1]), Number(dmy[2]), Number(dmy[3])];
@@ -117,6 +135,42 @@ function parseCreate(s: string): IntentResult | undefined {
   return undefined;
 }
 
+const STAFF = String.raw`(?:employees?|staff(?:\s+member)?|worker|salesman|salesperson|helper|driver)`;
+const GENDER_RE = /\b(female|male|woman|man|lady|girl|boy|other)\b/i;
+const genderOf = (w: string | undefined) => (!w ? undefined : /^(female|woman|lady|girl)$/i.test(w) ? 'Female' : /^(male|man|boy)$/i.test(w) ? 'Male' : 'Other');
+
+/**
+ * "Create Employee Sona C", "add staff Ajith", "new employee: Rahul K", "add Sona C as employee",
+ * "create employee Sona C female born 12/03/1995 joined today".
+ */
+export function parseCreateEmployee(text: string): IntentResult | undefined {
+  const s = text.trim().replace(/\s+/g, ' ');
+  const m =
+    s.match(new RegExp(String.raw`^${VERB}\s+${FILLER}${STAFF}${LINK}(.*)$`, 'i')) ??
+    s.match(new RegExp(String.raw`^${VERB}\s+${FILLER}${STAFF}()\.?$`, 'i')) ??
+    s.match(new RegExp(String.raw`^(?:${VERB}|hire|hired|appoint|appointed)\s+(.+?)\s+as\s+${FILLER}${STAFF}\.?$`, 'i'));
+  if (!m) return undefined;
+  let rest = m[1] ?? '';
+  const take = (re: RegExp) => {
+    const hit = rest.match(re);
+    if (hit) rest = rest.replace(hit[0], ' ').replace(/\s+/g, ' ').trim();
+    return hit;
+  };
+  const DATE = String.raw`(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|today|yesterday|\d{1,2}(?:st|nd|rd|th)?\s+[a-z]+\.?(?:,?\s+\d{4})?|[a-z]+\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?)`;
+  const dob = take(new RegExp(String.raw`[,;]?\s*\b(?:born(?:\s+on)?|dob|d\.o\.b\.?|date\s+of\s+birth|birth\s*date|birthday)\s*[:=-]?\s*${DATE}`, 'i'));
+  const doj = take(new RegExp(String.raw`[,;]?\s*\b(?:joined|joining(?:\s+date)?|doj|date\s+of\s+joining|from|starting|starts?)\s*(?:on\s+)?[:=-]?\s*${DATE}`, 'i'));
+  const g = take(new RegExp(String.raw`[,;]?\s*(?:gender\s*[:=-]?\s*)?${GENDER_RE.source}\s*$`, 'i'));
+  const name = cleanName(rest.replace(/[,;]+$/, ''));
+  const entities: IntentResult['entities'] = { party: name };
+  const birthDate = dob ? parseDate(dob[1]!) : undefined;
+  const joiningDate = doj ? parseDate(doj[1]!) : undefined;
+  if (birthDate) entities.birthDate = birthDate;
+  if (joiningDate) entities.joiningDate = joiningDate;
+  if (g) entities.gender = genderOf(g[1]);
+  if (!name) delete entities.party;
+  return { intent: 'add_employee', confidence: 0.9, entities };
+}
+
 // ---------------- Money messages ----------------
 
 const NUM = String.raw`(\d[\d,]*(?:\.\d+)?)\s*(?:(k|lakhs?|lacs?|l|crores?|cr)(?![a-z]))?`;
@@ -192,6 +246,8 @@ export function ruleClassify(text: string): IntentResult | undefined {
 
   if (/^(bank|bank lines?|check bank|bank check|reconcile|bank reconciliation|match bank)$/.test(t)) return { intent: 'bank', confidence: 0.9, entities: {} };
 
+  const employee = parseCreateEmployee(text);
+  if (employee) return employee;
   const create = parseCreateAccount(text);
   if (create) return create;
 

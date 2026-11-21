@@ -5,6 +5,7 @@ import type { Container } from '../../container.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
+import { parseDate } from '../../ai/rules.js';
 import { audit } from '../audit/audit.js';
 import { DOCTYPE_FOR, applyTaxTemplate, erpContext, partyDoc, partyPlacement, resolveAccounts, toErpDoc } from '../erpnext/mappers.js';
 import { createLedger, type LedgerKind } from '../erpnext/create-account.js';
@@ -176,7 +177,10 @@ export function parseEdit(text: string): Partial<DraftPayload> | undefined {
     case 'vendor':
       return { partyName: val };
     case 'date':
-      return /^\d{4}-\d{2}-\d{2}$/.test(val) ? { date: val } : undefined;
+    {
+      const date = parseDate(val); // "2026-11-18", "18/11/2026", "nov 18", "yesterday"
+      return date ? { date } : undefined;
+    }
     case 'billno':
     case 'invoiceno':
       return { billNo: val };

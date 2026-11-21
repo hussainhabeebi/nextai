@@ -42,7 +42,7 @@ function parseText<T>(content: Anthropic.ContentBlock[], schema: z.ZodType<T, z.
 export function parseIntent(text: string) {
   const raw = JSON.parse(text) as { entities?: Record<string, unknown> };
   const entities = Object.fromEntries(
-    Object.entries(raw.entities ?? {}).filter(([k, v]) => v !== null && v !== '' && !(k === 'amount' && (typeof v !== 'number' || v <= 0)) && !(k === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(String(v)))),
+    Object.entries(raw.entities ?? {}).filter(([k, v]) => v !== null && v !== '' && !(k === 'amount' && (typeof v !== 'number' || v <= 0)) && !((k === 'date' || k === 'birthDate' || k === 'joiningDate') && !/^\d{4}-\d{2}-\d{2}$/.test(String(v)))),
   );
   return intentResultSchema.parse({ ...raw, entities });
 }
@@ -165,6 +165,8 @@ Intents (pick exactly one):
 - add_account: create a ledger (GL account) in the chart of accounts, of any kind. "create expense account Fuel", "open bank account HDFC",
   "create capital account Hussain", "new loan account SBI Car Loan", "add GST payable ledger", "create fixed asset account Delivery Van",
   "create account Hussain Drawings under Capital Account"
+- add_employee: add a person to the staff list (an ERPNext Employee). "create employee Sona C", "add staff Ajith", "new employee Rahul joined today",
+  "Sona ne employee aayi add cheyyu"
 - bank: they want to go through unmatched bank transactions. "bank", "check bank", "reconcile"
 - briefing: they want today's overview. "briefing", "summary", "how's business today", "good morning", "innathe kanakku"
 - ask_books: a question about their numbers. "how much do customers owe me", "what did I spend on fuel this month", "ethra profit und"
@@ -172,12 +174,13 @@ Intents (pick exactly one):
 - send_reminder: remind a customer to pay. "remind Ravi", "Ravi ne remind cheyyu"
 - help: greetings or when nothing above fits.
 
-Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier name as written;
+Entities: amount as a plain number (5k → 5000, 2 lakh → 200000); currency only if written; party = the customer/supplier (or employee, for add_employee) name only, never with a date or payment mode attached
+("received 1060 from Orbit Travels on nov 18" → party "Orbit Travels", date of Nov 18);
 description = what the money was for (say "capital", "drawings" or "loan" when it is one of those; "deposit" or "withdrawal" for transfer); date as YYYY-MM-DD if mentioned; paymentMode = cash, bank, upi, card or credit if mentioned;
 kind (add_party / add_account) = one of customer, supplier, expense, direct_expense, income, direct_income, bank, cash, capital, liability, loan,
 tax, asset, fixed_asset, loan_advance, stock, investment (empty if not said); accountName (add_account) = the ledger name;
 group (add_account) = the account group if they name one ("under Capital Account" → Capital Account), else empty;
-question (ask_books) = the question as written. Use an empty string (0 for amount) for entities that do not apply.
+question (ask_books) = the question as written; gender (add_employee) = Female, Male or Other if said; birthDate / joiningDate (add_employee) as YYYY-MM-DD if said. Use an empty string (0 for amount) for entities that do not apply.
 Prefer a concrete intent over help whenever the meaning is reasonably clear; lower the confidence when unsure.`;
 
 export class AnthropicLlm implements LlmProvider {

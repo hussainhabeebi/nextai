@@ -201,6 +201,9 @@ describe('creating accounts from WhatsApp', () => {
     // ordinary customers still work, in a real (leaf) customer group
     const id5 = ++conv;
     await say('received 3000 from Ravi Traders', id5);
+    // not in ERPNext yet: asked before anything is drafted, then added as new on request
+    expect(cw().lastText(id5)).toMatch(/"Ravi Traders" is not in your customer list[\s\S]*Add "Ravi Traders" as new customer/);
+    await say('new', id5);
     expect(cw().lastText(id5)).toMatch(/Payment received[\s\S]*Customer: Ravi Traders/);
     await say('1', id5);
     await drain(c);
@@ -219,6 +222,9 @@ describe('everyday transactions over WhatsApp post the right ERPNext document', 
     const cw = () => c.cws.get(T.tenant.id)!;
     const docs = (d: string) => [...(c.erps.get(T.tenant.id)!.docs.get(d)?.values() ?? [])];
     const say = (text: string, conversationId: number) => sayAs(text, conversationId, T);
+    // the customers and suppliers already in this company's ERPNext
+    for (const n of ['4L fashion', 'Ravi']) await erp.create('Customer', { name: n, customer_name: n });
+    for (const n of ['4L fashion', 'AM Motors']) await erp.create('Supplier', { name: n, supplier_name: n });
     const confirm = async (text: string, expected: RegExp) => {
       const id = ++conv;
       await say(text, id);
@@ -376,6 +382,7 @@ describe('OCR → draft → confirm → post', () => {
       { account: 'Cash - AIL', debit_in_account_currency: 0, credit_in_account_currency: 300 },
     ]);
     const id2 = ++conv;
+    await c.erps.get(A.tenant.id)!.create('Customer', { name: 'Ravi Traders', customer_name: 'Ravi Traders' });
     await say('sold 5000', id2);
     expect(c.cws.get(A.tenant.id)!.lastText(id2)).toMatch(/customer name/);
     await say('Ravi Traders', id2);
@@ -438,7 +445,8 @@ describe('OCR → draft → confirm → post', () => {
     c.cws.get(A.tenant.id)!.attachments.set(url, { content: new TextEncoder().encode('Ravi paid 2000'), mime: 'audio/ogg' });
     await postCw(app, cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, attachments: [{ file_type: 'audio', data_url: url }], conversationId: id }));
     await drain(c);
-    expect(c.cws.get(A.tenant.id)!.lastText(id)).toMatch(/Payment received[\s\S]*Ravi[\s\S]*2,000/);
+    // "Ravi" is the only customer whose name, without "Traders", is Ravi
+    expect(c.cws.get(A.tenant.id)!.lastText(id)).toMatch(/Payment received[\s\S]*Customer: Ravi Traders[\s\S]*2,000/);
   });
 
   it('a job carrying tenant B id cannot touch tenant A drafts', async () => {

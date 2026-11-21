@@ -182,6 +182,12 @@ export const intentResultSchema = z.object({
       accountName: z.string().optional(),
       /** add_account: the group to put the ledger under, when named ("... under Capital Account"). */
       group: z.string().optional(),
+      /** add_employee: Female, Male or Other. (The employee's name is in `party`.) */
+      gender: z.string().optional(),
+      /** add_employee: date of birth, YYYY-MM-DD. */
+      birthDate: isoDate.optional(),
+      /** add_employee: date of joining, YYYY-MM-DD. */
+      joiningDate: isoDate.optional(),
     })
     .default({}),
 });
