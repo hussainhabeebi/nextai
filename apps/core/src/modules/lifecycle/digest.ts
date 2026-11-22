@@ -54,7 +54,7 @@ export async function sendStaffDigests(c: Container, tenant: Tenant, now = new D
     section('🟡 Coming up in 24h', upcoming);
     const text = lines.join('\n');
     try {
-      await sendWhatsApp(c, tenant, { kind: 'summary', phone: s.phone, name: s.name, templateKey: 'lifecycle_digest', params: [text], fallbackText: text, ref: `lc:digest:${day}:${s.id}` });
+      await sendWhatsApp(c, tenant, { kind: 'summary', channel: 'staff', phone: s.phone, name: s.name, templateKey: 'lifecycle_digest', params: [text], fallbackText: text, ref: `lc:digest:${day}:${s.id}` });
       sent++;
     } catch (err) {
       logger.warn({ tenantId: tenant.id, staffId: s.id, err: (err as Error).message }, 'staff digest failed');

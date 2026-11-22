@@ -10,6 +10,7 @@ import { env } from '../../config/env.js';
 import { audit } from '../../modules/audit/audit.js';
 import { adminAuthRoutes } from './auth.js';
 import { lifecycleAdminRoutes } from './lifecycle.js';
+import { officeAdminRoutes } from './office.js';
 import { platformRoutes } from './platform.js';
 
 const BOARD_COOKIE = 'nx_board';
@@ -26,6 +27,7 @@ export const adminRoutes =
     await app.register(adminAuthRoutes(c), { prefix: '/auth' });
     await app.register(platformRoutes(c));
     await app.register(lifecycleAdminRoutes(c));
+    await app.register(officeAdminRoutes(c));
 
     // Bull Board job monitor (super_admin only). The admin UI fetches a 10-minute token, then opens
     // /admin/v1/queues?t=<token>; the token is moved into an httpOnly cookie scoped to the board path.

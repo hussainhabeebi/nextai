@@ -29,6 +29,12 @@ export const TENANT_MODELS = new Set<string>([
   'LifecycleRule',
   'ReminderLevel',
   'LifecycleTimer',
+  'Attendance',
+  'Standup',
+  'LeaveRequest',
+  'Announcement',
+  'Approval',
+  'Meeting',
 ]);
 
 const WHERE_OPS = new Set([

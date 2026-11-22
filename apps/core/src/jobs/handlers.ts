@@ -7,7 +7,7 @@ import { processVoice } from '../modules/voice/pipeline.js';
 import { sendInvoice, sendReceipt, sendReminder } from '../modules/outbound/jobs.js';
 import { billingSync } from '../modules/billing/service.js';
 import { LIFECYCLE_DOCTYPES, LIFECYCLE_EVENTS, handleLifecycleEvent } from '../modules/lifecycle/events.js';
-import { healthErpnext, lifecycleScan, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
+import { healthErpnext, lifecycleScan, scheduleOffice, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
 
 const tenantId = z.string().uuid();
 export const jobSchemas = {
@@ -37,6 +37,7 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.outboundReminder]: (d) => sendReminder(c, jobSchemas[QUEUES.outboundReminder].parse(d)),
     [QUEUES.lifecycleEvent]: (d) => handleLifecycleEvent(c, jobSchemas[QUEUES.lifecycleEvent].parse(d)),
     [QUEUES.lifecycleScan]: (d) => (fanOut.parse(d), lifecycleScan(c)),
+    [QUEUES.officeTick]: (d) => (fanOut.parse(d), scheduleOffice(c)),
     [QUEUES.scheduleReminders]: (d) => (fanOut.parse(d), scheduleReminders(c)),
     [QUEUES.scheduleDailySummary]: (d) => (fanOut.parse(d), scheduleDailySummary(c)),
     [QUEUES.usageRollup]: (d) => (fanOut.parse(d), usageRollup(c)),

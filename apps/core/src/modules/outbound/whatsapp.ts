@@ -13,6 +13,8 @@ export interface OutboundOptions {
   file?: { filename: string; content: Uint8Array; mime: string };
   ref?: string;
   conversationId?: number;
+  /** Send from the team's staff number instead of the customer number. */
+  channel?: 'customer' | 'staff';
 }
 
 /**
@@ -20,7 +22,7 @@ export interface OutboundOptions {
  * are delivered, so we always lead with the template and attach files after it.
  */
 export async function sendWhatsApp(c: Container, tenant: Tenant, o: OutboundOptions): Promise<{ conversationId: number }> {
-  const cw = c.chatwoot(tenant);
+  const cw = c.chatwoot(tenant, o.channel);
   const lang = (tenant.language as Language) ?? 'en';
   const tpl =
     (await c.prisma.messageTemplate.findUnique({ where: { key_language: { key: o.templateKey, language: lang } } })) ??

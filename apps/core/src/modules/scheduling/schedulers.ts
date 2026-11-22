@@ -8,6 +8,7 @@ import { localHour, scanReminders, sendDailySummary } from '../outbound/jobs.js'
 import { scanTimers } from '../lifecycle/engine.js';
 import { sendStaffDigests } from '../lifecycle/digest.js';
 import { startMonthlyUpdates } from '../lifecycle/events.js';
+import { officeTick } from '../office/schedule.js';
 import { currentPeriod } from '../usage/usage.js';
 
 /** Cross-tenant fan-out uses the system context (audited by design: read-only selection of tenants). */
@@ -58,6 +59,11 @@ export async function lifecycleScan(c: Container, at = new Date()) {
   return { monthly, digests, ...scan };
 }
 
+/** office.tick — every 5 minutes: attendance nudges, end of day, team summary, meetings, weekly report. */
+export function scheduleOffice(c: Container, at = new Date()) {
+  return forEachTenant(c, (t) => officeTick(c, t, at));
+}
+
 /** usage.rollup — hourly snapshot of per-tenant usage into Redis for the admin dashboard. */
 export async function usageRollup(c: Container) {
   const period = currentPeriod();
@@ -96,4 +102,5 @@ export const SCHEDULE_QUEUES = {
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',
   [QUEUES.lifecycleScan]: '*/5 * * * *',
+  [QUEUES.officeTick]: '*/5 * * * *',
 } as const;

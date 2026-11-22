@@ -2,6 +2,7 @@ import type { LifecycleRole, LifecycleTimer, PrismaClient, ReminderLevel, StaffM
 import type { Container } from '../../container.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
+import { localDate } from '../outbound/jobs.js';
 import { sendWhatsApp } from '../outbound/whatsapp.js';
 import { erpContext } from '../erpnext/mappers.js';
 import { DEFAULT_PLAYBOOK } from './defaults.js';
@@ -137,15 +138,27 @@ export function render(text: string, vars: Record<string, string>): string {
 }
 
 type TimerWithRefs = LifecycleTimer & {
-  rule: { key: string; enabled: boolean; escalationRole: LifecycleRole; levels: ReminderLevel[] };
+  rule: { key: string; enabled: boolean; ownerRole: LifecycleRole; escalationRole: LifecycleRole; levels: ReminderLevel[] };
   owner: StaffMember | null;
   tenant: Tenant;
 };
 
 async function recipients(c: Container, t: TimerWithRefs, level: ReminderLevel): Promise<Array<{ name: string; phone: string }>> {
   if (level.audience === 'customer') return t.customerPhone ? [{ name: t.customerName ?? 'Customer', phone: t.customerPhone }] : [];
-  if (level.audience === 'owner') return t.owner?.active ? [{ name: t.owner.name, phone: t.owner.phone }] : [];
   const db = tenantDb(c.prisma, t.tenantId);
+  if (level.audience === 'owner') {
+    if (!t.owner?.active) return [];
+    // Leave cover: while the owner is on approved leave, their backup (or the rest of the role) gets the reminder.
+    const today = localDate(erpContext(t.tenant).settings.timezone);
+    const away = (id: string) => db.leaveRequest.findFirst({ where: { staffId: id, status: 'approved', fromDate: { lte: today }, toDate: { gte: today } } });
+    if (!(await away(t.owner.id))) return [{ name: t.owner.name, phone: t.owner.phone }];
+    const backup = t.owner.backupStaffId ? await db.staffMember.findFirst({ where: { id: t.owner.backupStaffId, active: true } }) : null;
+    if (backup && !(await away(backup.id))) return [{ name: backup.name, phone: backup.phone }];
+    const pool = await db.staffMember.findMany({ where: { active: true, id: { not: t.owner.id }, roles: { has: t.rule.ownerRole } } });
+    const present = [];
+    for (const s of pool) if (!(await away(s.id))) present.push({ name: s.name, phone: s.phone });
+    return present;
+  }
   const byRole = (role: LifecycleRole) => db.staffMember.findMany({ where: { active: true, roles: { has: role } } });
   let staff = await byRole(level.audience === 'management' ? 'management' : t.rule.escalationRole);
   // Escalating to yourself is pointless: if the owner is the only escalation contact, go to management.
@@ -169,6 +182,7 @@ async function sendLevel(c: Container, t: TimerWithRefs, level: ReminderLevel) {
     try {
       await sendWhatsApp(c, t.tenant, {
         kind: level.audience === 'customer' ? 'reminder' : 'notice',
+        channel: level.audience === 'customer' ? 'customer' : 'staff',
         phone: to.phone,
         name: to.name,
         templateKey: level.templateKey,
@@ -208,7 +222,7 @@ async function reviewHealth(c: Container, t: TimerWithRefs, now: Date) {
     const text = `⚠️ Health ${h.score}/100 for ${t.customerName ?? t.docName} (${t.docName}) at ${t.rule.key === 'review.day7' ? 'day 7' : 'day 30'}: ${next.health_reasons}.`;
     const mgmt = await tenantDb(c.prisma, t.tenantId).staffMember.findMany({ where: { active: true, roles: { has: 'management' } } });
     for (const m of mgmt) {
-      await sendWhatsApp(c, t.tenant, { kind: 'notice', phone: m.phone, name: m.name, templateKey: 'lifecycle_notice', params: [text], fallbackText: text, ref: `lc:${t.id}:health` }).catch((err) =>
+      await sendWhatsApp(c, t.tenant, { kind: 'notice', channel: 'staff', phone: m.phone, name: m.name, templateKey: 'lifecycle_notice', params: [text], fallbackText: text, ref: `lc:${t.id}:health` }).catch((err) =>
         logger.warn({ tenantId: t.tenantId, err: (err as Error).message }, 'health alert failed'),
       );
     }

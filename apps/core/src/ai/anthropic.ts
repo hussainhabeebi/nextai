@@ -122,6 +122,19 @@ Reply in ${lang === 'ml' ? 'Malayalam' : lang === 'ar' ? 'Arabic' : 'English'}. 
     return { text, usage: usageOf(response.usage) };
   }
 
+  async summarize(instruction: string, context: string) {
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 2000,
+      output_config: { effort: 'low' },
+      system: `You write short internal updates for a small team's WhatsApp. Use plain text with "•" bullets, at most 8 lines,
+no preamble. Only use facts from the data. ${instruction}`,
+      messages: [{ role: 'user', content: context.slice(0, 30000) }],
+    });
+    if (response.stop_reason === 'refusal') return { text: '', usage: usageOf(response.usage) };
+    return { text: response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n').trim(), usage: usageOf(response.usage) };
+  }
+
   async checkItems(input: { text: string; fileNames: string[]; items: string[] }) {
     const response = await this.client.messages.create({
       model: MODEL,

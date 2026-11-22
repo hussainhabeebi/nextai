@@ -122,6 +122,19 @@ enum LifecycleTimerStatus {
   cancelled
 }
 
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+enum MeetingStatus {
+  scheduled
+  done
+  cancelled
+}
+
 enum SessionKind {
   app
   admin
@@ -141,6 +154,8 @@ model Tenant {
   erpWebhookSecretEnc  String?      @map("erp_webhook_secret_enc")
   cwAccountId          Int?         @map("cw_account_id")
   cwInboxId            Int?         @unique @map("cw_inbox_id")
+  /// Separate WhatsApp number (Chatwoot inbox) for the team: the virtual office assistant and all staff notifications.
+  cwStaffInboxId       Int?         @unique @map("cw_staff_inbox_id")
   cwBotTokenEnc        String?      @map("cw_bot_token_enc")
   /// HMAC secret for the lead-capture webhook (Leadvyne). AES-GCM, AAD = lead_webhook:{tenant id}
   leadWebhookSecretEnc String?      @map("lead_webhook_secret_enc")
@@ -163,6 +178,12 @@ model Tenant {
   staffMembers    StaffMember[]
   lifecycleRules  LifecycleRule[]
   lifecycleTimers LifecycleTimer[]
+  attendance      Attendance[]
+  standups        Standup[]
+  leaveRequests   LeaveRequest[]
+  announcements   Announcement[]
+  approvals       Approval[]
+  meetings        Meeting[]
 
   @@map("tenants")
 }
@@ -438,18 +459,29 @@ model MessageTemplate {
 
 /// Internal team member who receives lifecycle reminders (WhatsApp) and ERPNext assignments.
 model StaffMember {
-  id        String          @id @default(uuid()) @db.Uuid
-  tenantId  String          @map("tenant_id") @db.Uuid
-  name      String
-  phone     String // E.164
-  erpUser   String?         @map("erp_user") // ERPNext user id (email), used for assignments
-  roles     LifecycleRole[]
-  active    Boolean         @default(true)
-  createdAt DateTime        @default(now()) @map("created_at")
-  updatedAt DateTime        @updatedAt @map("updated_at")
+  id            String          @id @default(uuid()) @db.Uuid
+  tenantId      String          @map("tenant_id") @db.Uuid
+  name          String
+  phone         String // E.164
+  erpUser       String?         @map("erp_user") // ERPNext user id (email), used for assignments
+  roles         LifecycleRole[]
+  active        Boolean         @default(true)
+  /// in | out | busy | leave — set from WhatsApp (check-in, "busy", leave) or by the schedulers.
+  presence      String          @default("out")
+  presenceNote  String?         @map("presence_note")
+  presenceAt    DateTime?       @map("presence_at")
+  /// Who covers this person's reminders while they are on leave.
+  backupStaffId String?         @map("backup_staff_id") @db.Uuid
+  /// ERPNext Employee id, for the optional attendance sync.
+  erpEmployee   String?         @map("erp_employee")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
 
-  tenant Tenant           @relation(fields: [tenantId], references: [id])
-  timers LifecycleTimer[]
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  timers     LifecycleTimer[]
+  attendance Attendance[]
+  standups   Standup[]
+  leaves     LeaveRequest[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -528,4 +560,133 @@ model LifecycleTimer {
   @@index([tenantId, status])
   @@index([status, anchorAt])
   @@map("lifecycle_timers")
+}
+
+// ---------------- Virtual office ----------------
+
+/// One row per staff member per local working day.
+model Attendance {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  staffId    String    @map("staff_id") @db.Uuid
+  date       String    @db.VarChar(10) // YYYY-MM-DD, tenant local
+  checkInAt  DateTime? @map("check_in_at")
+  checkOutAt DateTime? @map("check_out_at")
+  late       Boolean   @default(false)
+  note       String?
+  erpSynced  Boolean   @default(false) @map("erp_synced")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id])
+  staff  StaffMember @relation(fields: [staffId], references: [id])
+
+  @@unique([staffId, date])
+  @@index([tenantId, date])
+  @@map("attendance")
+}
+
+/// Daily stand-up: plan and blockers at check-in, done and handover at check-out.
+model Standup {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  staffId      String   @map("staff_id") @db.Uuid
+  date         String   @db.VarChar(10)
+  plan         String?
+  blockers     String?
+  done         String?
+  handover     String?
+  handoverToId String?  @map("handover_to_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id])
+  staff  StaffMember @relation(fields: [staffId], references: [id])
+
+  @@unique([staffId, date])
+  @@index([tenantId, date])
+  @@map("standups")
+}
+
+model LeaveRequest {
+  id        String         @id @default(uuid()) @db.Uuid
+  tenantId  String         @map("tenant_id") @db.Uuid
+  staffId   String         @map("staff_id") @db.Uuid
+  fromDate  String         @map("from_date") @db.VarChar(10)
+  toDate    String         @map("to_date") @db.VarChar(10)
+  reason    String?
+  status    ApprovalStatus @default(pending)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id])
+  staff  StaffMember @relation(fields: [staffId], references: [id])
+
+  @@index([tenantId, fromDate])
+  @@map("leave_requests")
+}
+
+model Announcement {
+  id           String          @id @default(uuid()) @db.Uuid
+  tenantId     String          @map("tenant_id") @db.Uuid
+  fromStaffId  String?         @map("from_staff_id") @db.Uuid // null = admin console
+  roles        LifecycleRole[] @default([]) // empty = everyone
+  text         String
+  recipientIds String[]        @default([]) @map("recipient_ids")
+  ackIds       String[]        @default([]) @map("ack_ids")
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@map("announcements")
+}
+
+/// Approvals answered on WhatsApp ("approve 12" / "reject 12 reason") or in the admin console.
+model Approval {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @map("tenant_id") @db.Uuid
+  code          Int // short number typed on WhatsApp, unique per tenant
+  kind          String // leave | discount | refund | expense | other
+  title         String
+  details       String?
+  amount        String?
+  ref           String? // e.g. leave request id
+  requestedById String?        @map("requested_by_id") @db.Uuid
+  approverRole  LifecycleRole  @default(management) @map("approver_role")
+  status        ApprovalStatus @default(pending)
+  decidedBy     String?        @map("decided_by") // staff id or "admin:<id>"
+  decisionNote  String?        @map("decision_note")
+  decidedAt     DateTime?      @map("decided_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("approvals")
+}
+
+model Meeting {
+  id           String        @id @default(uuid()) @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  code         Int
+  title        String
+  startsAt     DateTime      @map("starts_at")
+  durationMin  Int           @default(30) @map("duration_min")
+  organizerId  String?       @map("organizer_id") @db.Uuid
+  attendeeIds  String[]      @default([]) @map("attendee_ids")
+  status       MeetingStatus @default(scheduled)
+  notes        String?
+  taskNames    String[]      @default([]) @map("task_names")
+  remindedAt   DateTime?     @map("reminded_at")
+  notesAskedAt DateTime?     @map("notes_asked_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, code])
+  @@index([tenantId, startsAt])
+  @@map("meetings")
 }

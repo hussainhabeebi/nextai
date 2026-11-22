@@ -53,7 +53,7 @@ async function attachAll(x: Ctx, doctype: string, name: string) {
 
 async function notifyStaff(x: Ctx, staff: Array<{ name: string; phone: string }>, text: string, ref: string) {
   for (const s of staff) {
-    await sendWhatsApp(x.c, x.tenant, { kind: 'notice', phone: s.phone, name: s.name, templateKey: 'lifecycle_notice', params: [text], fallbackText: text, ref }).catch((err) =>
+    await sendWhatsApp(x.c, x.tenant, { kind: 'notice', channel: 'staff', phone: s.phone, name: s.name, templateKey: 'lifecycle_notice', params: [text], fallbackText: text, ref }).catch((err) =>
       logger.warn({ tenantId: x.tenant.id, err: (err as Error).message }, 'staff notice failed'),
     );
   }
