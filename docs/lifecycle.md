@@ -112,10 +112,79 @@ reaches customers inside the 24 h window.
    - `demo_reminder`, `proposal_followup`, `payment_reminder`, `onboarding_welcome`, `data_request`, `golive`,
      `review_request`, `monthly_update`, `support_ack`, `support_resolved`, `renewal_reminder`
 
-## Not built yet
+## Customer replies on WhatsApp
 
-- **AI data chasing:** customer replies with files are not yet attached to the Task. This needs an `onboarding_data` intent in
-  the WhatsApp flow; today the reminders ask for the data and the owner collects it.
-- **Health score:** no automatic score (usage, open issues, payment status) or management alert below a threshold yet.
-- **Staff extras:** no 9 am staff digest and no `/admin/pipeline` funnel or overdue report yet.
-- **Monthly update replies:** customer replies to the monthly bot update are not yet turned into product updates in ERPNext.
+A message from a number that is not an app user, on a tenant with a playbook, is matched to that customer's open step
+(by `customerPhone`) before the usual "unknown number" reply:
+
+| Open step | What happens |
+|---|---|
+| `kickoff.data` | Files are stored (R2) and attached to the Project, and the message is logged as a Comment. The AI (`llm.checkItems`) ticks off the tenant's **data checklist** and replies with what is still missing. The chase restarts from the reply. When everything is in, the step closes and the owner is told to move the project to Build. |
+| `bot.monthly_update` | Files and text go to the Project. A **"Monthly bot update" Task** (due in 3 days) is created and assigned to the AI manager, who gets notified along with QA (Akshay, the rule's escalation role). The step closes, and the new Task gets its own `task.due` reminders. |
+| `support.issue` (open) | The message is added as a Comment on the Issue and support is notified. |
+| `support.resolved` (sent in the last 7 days) | "Still not working"-style replies **re-open the Issue**: it goes back to Open and the support reminders and escalation run again from now. Anything else is logged as the customer's confirmation. |
+| `review.day7` / `review.day30` (sent in the last 7 days) | The reply is logged on the Project as feedback and QA is notified. |
+| none | If `autoIssueFromWhatsApp` is on and the number belongs to an ERPNext Customer, the message is added as a Comment to their open Issue, or a new Issue is created (its `support.issue` step acknowledges the customer). |
+
+## Health score (day 7 / day 30)
+
+Before a review reminder is sent, NextAi scores the project out of 100:
+
+- −10 per open Issue (max −30)
+- −20 per overdue unpaid invoice (max −40)
+- −5 per overdue open Task (max −20)
+- −5 per lifecycle step that reached escalation in the last 30 days (max −20)
+
+The score is written to the Project (`custom_health_score`) and shown in the reminder (`{{health_score}}`, `{{health_reasons}}`).
+Management is alerted when it is below the tenant's threshold.
+
+## Staff digest
+
+At the tenant's digest hour (default 09:00 local), each active staff member gets one WhatsApp message listing their open steps:
+🔴 escalated, 🟠 reminded but still open, 🟡 coming up in the next 24 hours. It is sent once per day, and only to people who
+have something on the list. Template key: `lifecycle_digest` (one `message` param).
+
+## Report (Admin → Lifecycle → Report)
+
+For the last 7 / 30 / 90 / 365 days:
+
+- **Funnel:** leads → demos → proposals → won → paid → live, with the conversion from each stage to the next.
+- **Lead sources.**
+- **Escalated and still open:** the current overdue list.
+- **People:** open, escalated and done per owner.
+- **Stages:** started, done, cancelled, open and escalation rate per stage.
+
+## Settings (Admin → Lifecycle → Setup)
+
+| Setting | Default |
+|---|---|
+| Morning digest on, and its hour | on, 09:00 |
+| Health-score alert threshold | 60 |
+| Onboarding data checklist | Product list, Prices, FAQs, Logo, Business hours |
+| WhatsApp → Issue for known customers | on |
+
+## Leadvyne
+
+Leadvyne's payload format is not publicly documented, so `POST /webhooks/leadvyne/<slug>` accepts common variants:
+
+- **Field layout:** flat, or nested under `lead` / `data`.
+- **Field names:**
+  - name: `name`, `full_name`, `lead_name`, or `first_name` + `last_name`
+  - phone: `phone`, `mobile`, `phone_number`, `whatsapp`
+  - email: `email`, `email_id`
+  - source: `source`, `lead_source`, `platform`, `channel`
+  - campaign: `campaign`, `campaign_name`, `utm_campaign`, `ad_name`, `form_name`
+  - company: `company`, `company_name`
+  - message: `message`, `notes`, `comments`
+  - id: `id`, `lead_id`, `leadgen_id`
+- **Authentication:**
+  - signature header `X-Leadvyne-Signature`, `X-Signature` or `X-Hub-Signature-256`, as hex HMAC-SHA256 of the body (`sha256=` prefix optional);
+  - or `?token=<secret>` when Leadvyne cannot sign.
+
+Send one test lead from Leadvyne and check that it appears in ERPNext. If its field names differ, add them to
+`normalizeLeadPayload` in `apps/core/src/routes/webhooks/leadvyne.ts`.
+
+## Extra ERPNext setup for these features
+
+- Project: custom field `custom_health_score` (Int).
+- WhatsApp templates: `lifecycle_digest` (one `message` param).

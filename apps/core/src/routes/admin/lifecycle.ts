@@ -1,4 +1,5 @@
-import { LIFECYCLE_ROLES, REMINDER_AUDIENCES, normalizePhone } from '@nextai/shared';
+import { LIFECYCLE_ROLES, REMINDER_AUDIENCES, lifecycleSettingsSchema, normalizePhone, tenantSettingsSchema } from '@nextai/shared';
+import type { Prisma } from '@prisma/client';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -9,6 +10,7 @@ import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { audit } from '../../modules/audit/audit.js';
 import { installDefaultPlaybook } from '../../modules/lifecycle/engine.js';
+import { lifecycleReport } from '../../modules/lifecycle/report.js';
 import { sealLeadWebhookSecret } from '../../modules/tenants/secrets.js';
 
 const tenantParam = z.object({ id: z.string().uuid() });
@@ -62,6 +64,7 @@ export const lifecycleAdminRoutes =
         staff,
         leadWebhook: { configured: !!t.leadWebhookSecretEnc, url: `${env().API_URL}/webhooks/leadvyne/${t.slug}` },
         erpWebhookUrl: `${env().API_URL}/webhooks/erpnext/${t.slug}`,
+        settings: tenantSettingsSchema.parse(t.settings ?? {}).lifecycle,
       };
     });
 
@@ -193,6 +196,23 @@ export const lifecycleAdminRoutes =
         await logChange(req, tenantId, 'lifecycle.timer.close', 'lifecycle_timer', req.params.timerId, undefined, req.body);
         return { ok: true };
       },
+    );
+
+    // ---------------- Settings & report ----------------
+    app.patch('/tenants/:id/lifecycle/settings', { ...ops, schema: { tags: ['admin'], params: tenantParam, body: lifecycleSettingsSchema.partial() } }, async (req) => {
+      const t = await tenantOr404(req.params.id);
+      const current = tenantSettingsSchema.parse(t.settings ?? {});
+      const lifecycle = lifecycleSettingsSchema.parse({ ...current.lifecycle, ...req.body });
+      const settings = { ...(t.settings as object), lifecycle } as Prisma.InputJsonValue;
+      await withSystemTx(c.prisma, (tx) => tx.tenant.update({ where: { id: t.id }, data: { settings } }));
+      await logChange(req, t.id, 'lifecycle.settings', 'tenant', t.id, current.lifecycle, lifecycle);
+      return lifecycle;
+    });
+
+    app.get(
+      '/tenants/:id/lifecycle/report',
+      { ...anyAdmin, schema: { tags: ['admin'], params: tenantParam, querystring: z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }) } },
+      async (req) => lifecycleReport(c, (await tenantOr404(req.params.id)).id, req.query.days),
     );
 
     // ---------------- Lead webhook secret ----------------

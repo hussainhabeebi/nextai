@@ -152,8 +152,8 @@ export async function handleLifecycleEvent(c: Container, j: LifecycleEventJob, n
           customerPhone: phoneOf(doc, tenant),
           context: { lead_name: str(doc.lead_name) ?? j.name, source: str(doc.source) ?? 'website', phone: phoneOf(doc, tenant) },
         };
-        await startTimer(c, tid, { ...base, ruleKey: 'lead.assign' }, now);
-        await startTimer(c, tid, { ...base, ruleKey: 'lead.first_call' }, now);
+        await startTimer(c, tid, { ...base, ruleKey: 'lead.assign', keepAnchor: true }, now);
+        await startTimer(c, tid, { ...base, ruleKey: 'lead.first_call', keepAnchor: true }, now);
       } else {
         await closeTimers(c, tid, ['lead.first_call'], 'Lead', j.name, ['Do Not Contact'].includes(status) ? 'cancelled' : 'done');
       }
@@ -327,7 +327,7 @@ export async function handleLifecycleEvent(c: Container, j: LifecycleEventJob, n
         await closeTimers(c, tid, ['support.issue'], 'Issue', j.name);
         await startTimer(c, tid, { ...s, ruleKey: 'support.resolved', anchorAt: now }, now);
       } else {
-        await startTimer(c, tid, { ...s, ruleKey: 'support.issue' }, now);
+        await startTimer(c, tid, { ...s, ruleKey: 'support.issue', keepAnchor: true }, now);
       }
       return { status: 'ok' };
     }

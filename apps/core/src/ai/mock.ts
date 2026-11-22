@@ -50,4 +50,16 @@ export class MockLlm implements LlmProvider {
   async answer(question: string, context: string) {
     return { text: `Based on your books: ${context.slice(0, 400)}`, usage: zero };
   }
+  /** Keyword match: an item is covered when any of its words (4+ letters, singular) appears in the text or file names. */
+  async checkItems(input: { text: string; fileNames: string[]; items: string[] }) {
+    const hay = `${input.text} ${input.fileNames.join(' ')}`.toLowerCase();
+    const covered = input.items.filter((item) =>
+      item
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter((w) => w.length >= 4)
+        .some((w) => hay.includes(w.replace(/s$/, ''))),
+    );
+    return { covered, usage: zero };
+  }
 }

@@ -5,7 +5,11 @@ import { seed } from '../prisma/seed.js';
 import { buildApp } from '../src/app.js';
 import { tenantDb, withSystemTx } from '../src/lib/db.js';
 import { scanTimers } from '../src/modules/lifecycle/engine.js';
-import { erpTime, handleLifecycleEvent } from '../src/modules/lifecycle/events.js';
+import { erpTime, handleLifecycleEvent, startMonthlyUpdates } from '../src/modules/lifecycle/events.js';
+import { sendStaffDigests } from '../src/modules/lifecycle/digest.js';
+import { normalizeLeadPayload } from '../src/routes/webhooks/leadvyne.js';
+import { MockLlm } from '../src/ai/mock.js';
+import { cwMessage, postCw } from './webhook-helpers.js';
 import { signAccess } from '../src/modules/auth/tokens.js';
 import { closeShared, createTenant, drain, testContainer } from './helpers.js';
 
@@ -193,6 +197,145 @@ describe('first payment → onboarding project', () => {
     await erp.submit('Payment Entry', 'PE-B');
     expect((await handleLifecycleEvent(c, { tenantId: B.tenant.id, doctype: 'Payment Entry', name: 'PE-B', event: 'on_submit' })).status).toBe('not_enabled');
     expect(erp.calls.some((x) => x.method === 'create' && x.args[0] === 'Project')).toBe(false);
+  });
+});
+
+describe('customer replies on WhatsApp', () => {
+  const NOOR = '+919811111111';
+  const say = (content: string, attachments?: Array<{ file_type: string; data_url: string }>) =>
+    postCw(app, cwMessage({ inboxId: A.tenant.cwInboxId!, phone: NOOR, content, attachments, conversationId: 9090 }));
+  let project = '';
+
+  it('kickoff: files go to the Project, the AI ticks the checklist and chases only what is missing', async () => {
+    const erp = c.erps.get(A.tenant.id)!;
+    await erp.create('Customer', { name: 'Noor Foods', customer_name: 'Noor Foods', mobile_no: NOOR });
+    await erp.create('Payment Entry', { name: 'PE-N1', payment_type: 'Receive', party_type: 'Customer', party: 'Noor Foods', references: [] });
+    await erp.submit('Payment Entry', 'PE-N1');
+    project = ((await handleLifecycleEvent(c, { tenantId: A.tenant.id, doctype: 'Payment Entry', name: 'PE-N1', event: 'on_submit' })) as { project: string }).project;
+    const before = (await timer('kickoff.data', project))!;
+    await withSystemTx(c.prisma, (tx) => tx.lifecycleTimer.update({ where: { id: before.id }, data: { sentLevels: [1] } }));
+
+    const url = 'https://app.aiingo.com/rails/active_storage/logo.png';
+    c.chatwoot(A.tenant);
+    c.cws.get(A.tenant.id)!.attachments.set(url, { content: new Uint8Array([1, 2, 3]), mime: 'image/png' });
+    const r1 = await say('Here is our product list with prices', [{ file_type: 'image', data_url: url }]);
+    expect(r1.json().status).toBe('customer_reply');
+    const t1 = (await timer('kickoff.data', project))!;
+    expect(t1.status).toBe('open');
+    expect(t1.sentLevels).toEqual([]); // chase restarts from the reply
+    expect((t1.context as Record<string, string>).data_received!.split('|').sort()).toEqual(['Logo', 'Prices', 'Product list']);
+    expect(c.cws.get(A.tenant.id)!.lastText(9090)).toContain('Still needed: FAQs, Business hours');
+    expect(erp.files.some((f) => f.filename === 'logo.png' && f.attachTo?.name === project)).toBe(true);
+    expect([...erp.docs.get('Comment')!.values()].some((x) => x.reference_name === project)).toBe(true);
+
+    await say('FAQs and our business hours: 9 to 6');
+    expect((await timer('kickoff.data', project))!.status).toBe('done');
+    expect(c.cws.get(A.tenant.id)!.lastText(9090)).toContain('We now have everything');
+  });
+
+  it('monthly update: the reply becomes a Task for the AI manager and closes the step', async () => {
+    const erp = c.erps.get(A.tenant.id)!;
+    await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h('support'), payload: { name: 'AI Manager', phone: '+919800000005', roles: ['ai_manager'], erpUser: 'ai@nextai.test' } });
+    await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h('support'), payload: { name: 'Akshay', phone: '+919800000006', roles: ['qa'], erpUser: 'akshay@nextai.test' } });
+    await erp.update('Project', project, { custom_stage: 'Live' });
+    // 1st of next month, 10:00 IST (the tenant reminder hour).
+    const d = new Date();
+    const first = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 4, 30));
+    const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: A.tenant.id } }));
+    expect(await startMonthlyUpdates(c, tenant, first)).toBeGreaterThanOrEqual(1);
+    const month = first.toISOString().slice(0, 7);
+    expect((await timer('bot.monthly_update', `${project}@${month}`))!.status).toBe('open');
+
+    c.queue.jobs = [];
+    expect((await say('New offer: 20% off biryani this month')).json().status).toBe('customer_reply');
+    const m = (await timer('bot.monthly_update', `${project}@${month}`))!;
+    expect(m.status).toBe('done');
+    const task = await erp.get('Task', (m.context as Record<string, string>).task!);
+    expect(task).toMatchObject({ project, _assign: JSON.stringify(['ai@nextai.test']) });
+    expect(c.queue.jobs.some((j) => j.name === 'lifecycle.event')).toBe(true);
+  });
+
+  it('support: a message with no open step opens an Issue; "still not working" after resolve re-opens it', async () => {
+    const erp = c.erps.get(A.tenant.id)!;
+    c.queue.jobs = [];
+    expect((await say('The bot is not replying to customers')).json().status).toBe('customer_reply');
+    const issue = [...erp.docs.get('Issue')!.values()].find((i) => i.customer === 'Noor Foods')!;
+    expect(issue.subject).toBe('The bot is not replying to customers');
+    await drain(c);
+    expect((await timer('support.issue', String(issue.name)))!.status).toBe('open');
+
+    // A follow-up message is added to the open Issue as a comment.
+    await say('Also the menu is old');
+    expect([...erp.docs.get('Comment')!.values()].some((x) => x.reference_name === issue.name && String(x.content).includes('menu is old'))).toBe(true);
+
+    await erp.update('Issue', String(issue.name), { status: 'Resolved' });
+    await handleLifecycleEvent(c, { tenantId: A.tenant.id, doctype: 'Issue', name: String(issue.name), event: 'on_update' });
+    await scanTimers(c, new Date(Date.now() + MIN));
+    expect((await timer('support.resolved', String(issue.name)))!.status).toBe('done'); // confirmation sent (single level)
+
+    expect((await say('It is still not working')).json().status).toBe('customer_reply');
+    expect((await erp.get('Issue', String(issue.name))).status).toBe('Open');
+    const reopened = (await timer('support.issue', String(issue.name)))!;
+    expect(reopened.status).toBe('open');
+    expect(reopened.sentLevels).toEqual([1, 2]);
+    expect(await timer('support.resolved', String(issue.name))).toBeNull();
+  });
+
+  it('day-7 review computes the health score, writes it to the Project and alerts management below the threshold', async () => {
+    const erp = c.erps.get(A.tenant.id)!;
+    await handleLifecycleEvent(c, { tenantId: A.tenant.id, doctype: 'Project', name: project, event: 'on_update' });
+    const r = await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/settings`, headers: await h('support'), payload: { healthThreshold: 95 } });
+    expect(r.json().healthThreshold).toBe(95);
+    const t = (await timer('review.day7', project))!;
+    await scanTimers(c, new Date(t.anchorAt.getTime() + 7 * 1440 * MIN + MIN));
+    const after = (await timer('review.day7', project))!;
+    const ctx = after.context as Record<string, string>;
+    // A week later: the re-opened Issue (−10), the monthly-update Task is now overdue (−5) and the Issue escalated (−5).
+    expect(ctx.health_reasons).toBe('1 open issue(s) (−10), 1 overdue task(s) (−5), 1 escalated step(s) (−5)');
+    expect(ctx.health_score).toBe('80');
+    expect((await erp.get('Project', project)).custom_health_score).toBe(80);
+    const alerts = await tenantDb(c.prisma, A.tenant.id).outboundMessage.findMany({ where: { ref: `lc:${t.id}:health` } });
+    expect(alerts.map((a) => a.toPhone)).toEqual([MGMT]);
+  });
+});
+
+describe('staff digest and report', () => {
+  it('sends one morning digest per staff member per day', async () => {
+    const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: A.tenant.id } }));
+    const nineIst = new Date(Date.UTC(2030, 0, 15, 3, 35)); // 09:05 Asia/Kolkata
+    const n = await sendStaffDigests(c, tenant, nineIst);
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(await sendStaffDigests(c, tenant, nineIst)).toBe(0);
+    const digests = await tenantDb(c.prisma, A.tenant.id).outboundMessage.findMany({ where: { ref: { startsWith: 'lc:digest:2030-01-15' } } });
+    expect(digests.length).toBe(n);
+  });
+
+  it('reports the funnel, lead sources, stages and owners', async () => {
+    const r = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/report?days=30`, headers: await h('reviewer') })).json();
+    expect(r.funnel[0]).toMatchObject({ key: 'lead.assign', count: 1 });
+    expect(r.funnel.find((f: { key: string }) => f.key === 'handover.project').count).toBe(2);
+    expect(r.sources).toEqual({ Advertisement: 1 });
+    expect(r.stages.find((s: { key: string }) => s.key === 'lead.first_call')).toMatchObject({ started: 1, done: 1, escalated: 1 });
+    expect(r.owners.some((o: { name: string }) => o.name === 'Ali')).toBe(true);
+  });
+});
+
+describe('leadvyne payload variants', () => {
+  it('accepts nested / aliased fields and the ?token= form', async () => {
+    expect(normalizeLeadPayload({ lead: { full_name: 'Sara', mobile: '0501234567', lead_source: 'whatsapp', leadgen_id: 77 } })).toMatchObject({ id: '77', name: 'Sara', phone: '0501234567', source: 'whatsapp' });
+    const rot = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/lead-webhook-secret`, headers: await h('super_admin') });
+    const r = await app.inject({
+      method: 'POST',
+      url: `/webhooks/leadvyne/${A.tenant.slug}?token=${encodeURIComponent(rot.json().secret)}`,
+      payload: { data: { first_name: 'Ravi', last_name: 'K', phone_number: '9123456789', platform: 'website', lead_id: 'x-2' } },
+    });
+    expect(r.json().status).toBe('created');
+    expect(await c.erps.get(A.tenant.id)!.get('Lead', r.json().lead)).toMatchObject({ lead_name: 'Ravi K', source: 'Website' });
+  });
+
+  it('mock checklist matcher', async () => {
+    const r = await new MockLlm().checkItems({ text: 'sending FAQ now', fileNames: ['menu-prices.pdf'], items: ['Product list', 'Prices', 'FAQs'] });
+    expect(r.covered).toEqual(['Prices', 'FAQs']);
   });
 });
 

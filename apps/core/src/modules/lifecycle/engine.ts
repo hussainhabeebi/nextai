@@ -3,7 +3,9 @@ import type { Container } from '../../container.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { sendWhatsApp } from '../outbound/whatsapp.js';
+import { erpContext } from '../erpnext/mappers.js';
 import { DEFAULT_PLAYBOOK } from './defaults.js';
+import { HEALTH_FIELD, computeHealth } from './health.js';
 
 /** A level that is more than this late when first seen (worker down, level added later) is skipped, not sent. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -63,6 +65,8 @@ export interface StartTimer {
   customerName?: string | null;
   customerPhone?: string | null;
   context?: Record<string, string | number | null | undefined>;
+  /** Keep the anchor of an already-open timer (e.g. an Issue re-opened from WhatsApp keeps its new start). */
+  keepAnchor?: boolean;
 }
 
 /**
@@ -78,17 +82,18 @@ export async function startTimer(c: Container, tenantId: string, s: StartTimer, 
   const existing = await db.lifecycleTimer.findUnique({ where: { ruleId_doctype_docName: { ruleId: rule.id, doctype: s.doctype, docName: s.docName } } });
   if (existing) {
     if (existing.status !== 'open') return existing;
-    const anchorChanged = existing.anchorAt.getTime() !== s.anchorAt.getTime();
+    const anchorAt = s.keepAnchor ? existing.anchorAt : s.anchorAt;
+    const anchorChanged = existing.anchorAt.getTime() !== anchorAt.getTime();
     const sentLevels = anchorChanged
       ? existing.sentLevels.filter((n) => {
           const l = rule.levels.find((x) => x.level === n);
-          return l ? dueAt(s.anchorAt, l) <= now : true;
+          return l ? dueAt(anchorAt, l) <= now : true;
         })
       : existing.sentLevels;
     return db.lifecycleTimer.update({
       where: { id: existing.id },
       data: {
-        anchorAt: s.anchorAt,
+        anchorAt,
         sentLevels,
         context: { ...(existing.context as Record<string, string>), ...context },
         customerName: s.customerName ?? existing.customerName,
@@ -180,6 +185,37 @@ async function sendLevel(c: Container, t: TimerWithRefs, level: ReminderLevel) {
 }
 
 /**
+ * Day-7 / day-30 reviews: compute the project health score once per review, write it to the Project, put it in the
+ * message context ({{health_score}}, {{health_reasons}}) and alert management when it is below the tenant threshold.
+ */
+async function reviewHealth(c: Container, t: TimerWithRefs, now: Date) {
+  const ctx = t.context as Record<string, string>;
+  if (ctx.health_score !== undefined) return;
+  const erp = c.erp(t.tenant);
+  let customer: string | undefined;
+  try {
+    customer = ((await erp.get('Project', t.docName)).customer as string | undefined) ?? undefined;
+  } catch {
+    customer = undefined;
+  }
+  const h = await computeHealth(c, t.tenant, erp, { name: t.docName, customer }, now);
+  const next = { ...ctx, health_score: String(h.score), health_reasons: h.reasons.join(', ') || 'no issues found' };
+  t.context = next;
+  await tenantDb(c.prisma, t.tenantId).lifecycleTimer.update({ where: { id: t.id }, data: { context: next } });
+  await erp.update('Project', t.docName, { [HEALTH_FIELD]: h.score }).catch(() => undefined);
+  const threshold = erpContext(t.tenant).settings.lifecycle.healthThreshold;
+  if (h.score < threshold) {
+    const text = `⚠️ Health ${h.score}/100 for ${t.customerName ?? t.docName} (${t.docName}) at ${t.rule.key === 'review.day7' ? 'day 7' : 'day 30'}: ${next.health_reasons}.`;
+    const mgmt = await tenantDb(c.prisma, t.tenantId).staffMember.findMany({ where: { active: true, roles: { has: 'management' } } });
+    for (const m of mgmt) {
+      await sendWhatsApp(c, t.tenant, { kind: 'notice', phone: m.phone, name: m.name, templateKey: 'lifecycle_notice', params: [text], fallbackText: text, ref: `lc:${t.id}:health` }).catch((err) =>
+        logger.warn({ tenantId: t.tenantId, err: (err as Error).message }, 'health alert failed'),
+      );
+    }
+  }
+}
+
+/**
  * lifecycle.scan — every 5 minutes. Sends each enabled level of each open timer once, when it is due.
  * The level is claimed (pushed to sentLevels) before sending, so concurrent scans never double-send.
  * Disabled levels and disabled rules are skipped (and fire later if re-enabled while still fresh).
@@ -215,6 +251,7 @@ export async function scanTimers(c: Container, now = new Date()) {
         skipped++;
         continue;
       }
+      if (t.rule.key.startsWith('review.')) await reviewHealth(c, t, now).catch((err) => logger.warn({ timerId: t.id, err: (err as Error).message }, 'health score failed'));
       sent += await sendLevel(c, t, l);
     }
     if (levels.length > 0 && levels.every((l) => handled.has(l.level))) {

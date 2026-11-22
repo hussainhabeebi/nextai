@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { extractionSchema, intentResultSchema, type Country, type Currency, type Language } from '@nextai/shared';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { AiUsage, LlmProvider, VisionProvider } from './types.js';
 
@@ -32,6 +32,8 @@ export function strictJsonSchema(schema: z.ZodTypeAny): Json {
 
 const EXTRACTION_JSON = strictJsonSchema(extractionSchema);
 const INTENT_JSON = strictJsonSchema(intentResultSchema);
+const CHECK_SCHEMA = z.object({ covered: z.array(z.string()) });
+const CHECK_JSON = strictJsonSchema(CHECK_SCHEMA);
 
 function parseText<T>(content: Anthropic.ContentBlock[], schema: z.ZodType<T, z.ZodTypeDef, unknown>): T {
   const text = content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
@@ -118,5 +120,20 @@ Reply in ${lang === 'ml' ? 'Malayalam' : lang === 'ar' ? 'Arabic' : 'English'}. 
     if (response.stop_reason === 'refusal') return { text: 'Sorry, I cannot answer that.', usage: usageOf(response.usage) };
     const text = response.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n');
     return { text, usage: usageOf(response.usage) };
+  }
+
+  async checkItems(input: { text: string; fileNames: string[]; items: string[] }) {
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 1000,
+      system: `A business customer is sending onboarding material for their WhatsApp bot. Given their message and the names of
+the files they attached, return which checklist items they have provided. Copy items exactly as given; include an item only
+when the message or a file clearly supplies it. Messages may be in English, Malayalam (incl. Manglish) or Arabic.`,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: CHECK_JSON } },
+      messages: [{ role: 'user', content: `Checklist:\n${input.items.map((i) => `- ${i}`).join('\n')}\n\nFiles: ${input.fileNames.join(', ') || '(none)'}\n\nMessage:\n${input.text.slice(0, 4000) || '(no text)'}` }],
+    });
+    if (response.stop_reason !== 'end_turn') throw new Error(`Checklist check failed: ${response.stop_reason}`);
+    const covered = parseText(response.content, CHECK_SCHEMA).covered.filter((x) => input.items.includes(x));
+    return { covered, usage: usageOf(response.usage) };
   }
 }

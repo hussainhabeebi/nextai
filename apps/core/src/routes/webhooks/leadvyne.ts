@@ -10,42 +10,74 @@ import { claimEvent, markProcessed } from '../../modules/webhooks/idempotency.js
 
 /**
  * Lead capture from Leadvyne (which collects Meta ads, WhatsApp and website leads).
- * POST /webhooks/leadvyne/:tenantSlug with `X-Leadvyne-Signature: sha256=<hex hmac(secret, raw body)>`.
- * The secret is generated per tenant in the admin console (Lifecycle → Lead webhook).
- * TODO(leadvyne): confirm the exact payload field names and signature header with Leadvyne and adjust below.
+ * POST /webhooks/leadvyne/:tenantSlug, signed with the per-tenant secret (Admin → Lifecycle → Setup):
+ *   `X-Leadvyne-Signature` (or `X-Signature` / `X-Hub-Signature-256`) = `sha256=<hex hmac(secret, raw body)>` (prefix optional),
+ *   or, for tools that cannot sign, `?token=<secret>`.
+ * Leadvyne's payload format is not publicly documented, so common field names are accepted, flat or under `lead` / `data`:
+ *   name | full_name | lead_name | first_name+last_name, phone | mobile | phone_number | whatsapp, email | email_id,
+ *   source | lead_source | platform | channel, campaign | campaign_name | utm_campaign, company | company_name,
+ *   message | notes | comments, id | lead_id | leadgen_id.
  */
-const leadSchema = z
-  .object({
-    id: z.union([z.string(), z.number()]).transform(String),
-    name: z.string().min(1).max(140),
-    phone: z.string().min(5).max(30),
-    email: z.string().email().max(140).optional(),
-    source: z.string().max(60).optional(), // meta_ads | whatsapp | website | ...
-    campaign: z.string().max(140).optional(),
-    company: z.string().max(140).optional(),
-    message: z.string().max(2000).optional(),
-  })
-  .passthrough();
+const pick = (o: Record<string, unknown>, keys: string[]) => {
+  for (const k of keys) {
+    const v = o[k];
+    if ((typeof v === 'string' && v.trim()) || typeof v === 'number') return String(v).trim();
+  }
+  return undefined;
+};
+
+export function normalizeLeadPayload(body: unknown) {
+  const root = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const o = { ...root, ...((root.lead ?? root.data ?? {}) as Record<string, unknown>) } as Record<string, unknown>;
+  const name = pick(o, ['name', 'full_name', 'lead_name', 'contact_name']) ?? [pick(o, ['first_name']), pick(o, ['last_name'])].filter(Boolean).join(' ');
+  return {
+    id: pick(o, ['id', 'lead_id', 'leadgen_id', 'uuid']),
+    name,
+    phone: pick(o, ['phone', 'mobile', 'mobile_no', 'phone_number', 'whatsapp', 'whatsapp_number', 'contact_number']),
+    email: pick(o, ['email', 'email_id', 'email_address']),
+    source: pick(o, ['source', 'lead_source', 'platform', 'channel']),
+    campaign: pick(o, ['campaign', 'campaign_name', 'utm_campaign', 'ad_name', 'form_name']),
+    company: pick(o, ['company', 'company_name', 'business_name']),
+    message: pick(o, ['message', 'notes', 'comments', 'requirement']),
+  };
+}
+
+const leadSchema = z.object({
+  id: z.string().min(1).max(140),
+  name: z.string().min(1).max(140),
+  phone: z.string().min(5).max(30),
+  email: z.string().email().max(140).optional().catch(undefined),
+  source: z.string().max(60).optional(),
+  campaign: z.string().max(140).optional(),
+  company: z.string().max(140).optional(),
+  message: z.string().max(2000).optional(),
+});
 
 const SOURCES: Record<string, string> = { meta: 'Advertisement', meta_ads: 'Advertisement', facebook: 'Advertisement', instagram: 'Advertisement', whatsapp: 'WhatsApp', website: 'Website' };
 
-export function verifyLeadvyne(secret: string, rawBody: Buffer, signature: string | undefined): boolean {
-  if (!signature) return false;
-  const expected = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex');
-  return safeEqual(expected, signature);
+export function verifyLeadvyne(secret: string, rawBody: Buffer, signature: string | undefined, token?: string): boolean {
+  if (signature) {
+    const hex = createHmac('sha256', secret).update(rawBody).digest('hex');
+    return safeEqual(signature.startsWith('sha256=') ? `sha256=${hex}` : hex, signature);
+  }
+  return !!token && safeEqual(token, secret);
 }
 
 export const leadvyneWebhook =
   (c: Container): FastifyPluginAsyncZod =>
   async (app) => {
-    app.post('/leadvyne/:tenantSlug', { schema: { params: z.object({ tenantSlug: z.string().regex(/^[a-z0-9-]{2,40}$/) }) } }, async (req, reply) => {
+    app.post('/leadvyne/:tenantSlug', { schema: { params: z.object({ tenantSlug: z.string().regex(/^[a-z0-9-]{2,40}$/) }), querystring: z.object({ token: z.string().max(200).optional() }) } }, async (req, reply) => {
       const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUnique({ where: { slug: req.params.tenantSlug } }));
       if (!tenant?.leadWebhookSecretEnc || !tenant.erpApiKeyEnc) return reply.code(404).send({ error: 'not_found' });
       const secret = decrypt(tenant.leadWebhookSecretEnc, `lead_webhook:${tenant.id}`);
-      if (!verifyLeadvyne(secret, req.rawBody ?? Buffer.from(''), req.headers['x-leadvyne-signature'] as string | undefined)) {
+      const h = req.headers;
+      const signature = (h['x-leadvyne-signature'] ?? h['x-signature'] ?? h['x-hub-signature-256']) as string | undefined;
+      const token = req.query.token;
+      if (!verifyLeadvyne(secret, req.rawBody ?? Buffer.from(''), signature, token)) {
         return reply.code(401).send({ error: 'invalid_signature' });
       }
-      const p = leadSchema.safeParse(req.body);
+      const raw = normalizeLeadPayload(req.body);
+      const p = leadSchema.safeParse({ ...raw, id: raw.id ?? (raw.phone ? `phone:${raw.phone}:${new Date().toISOString().slice(0, 10)}` : undefined) });
       if (!p.success) return reply.code(400).send({ error: 'invalid_payload' });
       let phone: string;
       try {

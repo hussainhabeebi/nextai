@@ -21,6 +21,20 @@ export const reminderScheduleSchema = z.object({
   hourLocal: z.number().int().min(0).max(23).default(10),
 });
 
+/** Lead-to-customer lifecycle settings (used by tenants with an installed playbook). */
+export const lifecycleSettingsSchema = z.object({
+  /** Morning WhatsApp digest to each staff member: their overdue and due-today steps. */
+  digestEnabled: z.boolean().default(true),
+  digestHourLocal: z.number().int().min(0).max(23).default(9),
+  /** Project health score (0-100) below which management is alerted at the day-7 / day-30 reviews. */
+  healthThreshold: z.number().int().min(0).max(100).default(60),
+  /** What the AI chases the customer for during kickoff / data collection. */
+  dataChecklist: z.array(z.string().min(1).max(80)).max(20).default(['Product list', 'Prices', 'FAQs', 'Logo', 'Business hours']),
+  /** A WhatsApp message from a known Customer with no open step creates (or comments on) an ERPNext Issue. */
+  autoIssueFromWhatsApp: z.boolean().default(true),
+});
+export type LifecycleSettings = z.infer<typeof lifecycleSettingsSchema>;
+
 export const tenantSettingsSchema = z.object({
   taxRegime: z.enum(['gst_regular', 'gst_composition', 'vat', 'vat_ct', 'none']).default('gst_regular'),
   autoPost: z.boolean().default(false),
@@ -44,6 +58,7 @@ export const tenantSettingsSchema = z.object({
   taxTemplates: z.record(z.string()).default({}),
   autoSendInvoices: z.boolean().default(true),
   featureFlags: z.record(z.boolean()).default({}),
+  lifecycle: lifecycleSettingsSchema.default({}),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 

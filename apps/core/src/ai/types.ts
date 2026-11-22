@@ -25,6 +25,8 @@ export interface LlmProvider {
   readonly name: string;
   classify(text: string, ctx: { country: Country; currency: Currency; today: string }): Promise<{ result: IntentResult; usage: AiUsage }>;
   answer(question: string, context: string, lang: Language): Promise<{ text: string; usage: AiUsage }>;
+  /** Which checklist items does a customer's message (text + attached file names) cover? Returns items verbatim. */
+  checkItems(input: { text: string; fileNames: string[]; items: string[] }): Promise<{ covered: string[]; usage: AiUsage }>;
 }
 
 export interface AiProviders {

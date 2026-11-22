@@ -186,7 +186,7 @@ export const DEFAULT_PLAYBOOK: DefaultRule[] = [
     description: 'Done when the day-7 review Task is completed with a health score.',
     ownerRole: 'qa',
     levels: [
-      { level: 1, offsetMinutes: 7 * D, audience: 'owner', message: 'Day-7 review due for {{customer_name}} ({{project}}). Record the health score.' },
+      { level: 1, offsetMinutes: 7 * D, audience: 'owner', message: 'Day-7 review due for {{customer_name}} ({{project}}). Health score {{health_score}}/100: {{health_reasons}}.' },
       { level: 2, offsetMinutes: 7 * D, audience: 'customer', templateKey: 'review_request', message: 'Hi {{customer_name}}, how is your first week with NextAi? Reply with any feedback.' },
     ],
   },
@@ -197,7 +197,7 @@ export const DEFAULT_PLAYBOOK: DefaultRule[] = [
     description: 'Done when the day-30 review Task is completed with a health score.',
     ownerRole: 'qa',
     levels: [
-      { level: 1, offsetMinutes: 30 * D, audience: 'owner', message: 'Day-30 review due for {{customer_name}} ({{project}}). Record the health score.' },
+      { level: 1, offsetMinutes: 30 * D, audience: 'owner', message: 'Day-30 review due for {{customer_name}} ({{project}}). Health score {{health_score}}/100: {{health_reasons}}.' },
       { level: 2, offsetMinutes: 30 * D, audience: 'customer', templateKey: 'review_request', message: 'Hi {{customer_name}}, it has been a month with NextAi. How are we doing?' },
     ],
   },
