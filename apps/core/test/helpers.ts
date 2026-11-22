@@ -42,7 +42,10 @@ export function testContainer(): TestContainer {
     conversations: new MemoryConversationStore(),
     ai: { vision: new MockVision(), stt: new MockStt(), llm: new MockLlm() },
     erp: (t: Tenant) => erps.get(t.id) ?? erps.set(t.id, new FakeErpClient()).get(t.id)!,
-    chatwoot: (t: Tenant) => cws.get(t.id) ?? cws.set(t.id, new FakeChatwootClient()).get(t.id)!,
+    chatwoot: (t: Tenant, ch?: 'customer' | 'staff') => {
+      const k = ch === 'staff' && t.cwStaffInboxId ? `${t.id}:staff` : t.id;
+      return cws.get(k) ?? cws.set(k, new FakeChatwootClient()).get(k)!;
+    },
     payments: new FakePaymentProvider(),
     razorpay: (t: Tenant) => (t.rzpKeyId ? (rzps.get(t.id) ?? rzps.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined),
     provisioner: new FakeProvisionerClient(),

@@ -91,6 +91,12 @@ export class FakeErpClient implements ErpClient {
     await this.update(doctype, name, { docstatus: 2 });
   }
 
+  async assign(doctype: string, name: string, users: string[], description?: string): Promise<void> {
+    this.check('assign', [doctype, name, users, description]);
+    const d = await this.get(doctype, name);
+    d._assign = JSON.stringify(users);
+  }
+
   async uploadFile(file: { filename: string; content: Uint8Array; mime: string }, attachTo?: { doctype: string; name: string }) {
     this.check('uploadFile', [file.filename, attachTo]);
     this.files.push({ filename: file.filename, attachTo });

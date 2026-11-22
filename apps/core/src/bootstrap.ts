@@ -40,7 +40,12 @@ export function createContainer(): Container & { close: () => Promise<void> } {
     ai: createAiProviders(e),
     conversations: new RedisConversationStore(redis),
     erp: e.MOCK_EXTERNALS ? (t) => fakeErp.get(t.id) ?? fakeErp.set(t.id, new FakeErpClient()).get(t.id)! : erpClientFor,
-    chatwoot: e.MOCK_EXTERNALS ? (t) => fakeCw.get(t.id) ?? fakeCw.set(t.id, new FakeChatwootClient()).get(t.id)! : chatwootClientFor,
+    chatwoot: e.MOCK_EXTERNALS
+      ? (t, ch) => {
+          const k = ch === 'staff' && t.cwStaffInboxId ? `${t.id}:staff` : t.id;
+          return fakeCw.get(k) ?? fakeCw.set(k, new FakeChatwootClient()).get(k)!;
+        }
+      : chatwootClientFor,
     payments:
       e.STRIPE_SECRET_KEY && e.STRIPE_WEBHOOK_SECRET ? new StripeProvider(e.STRIPE_SECRET_KEY, e.STRIPE_WEBHOOK_SECRET) : new FakePaymentProvider(),
     razorpay: e.MOCK_EXTERNALS

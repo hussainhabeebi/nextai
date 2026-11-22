@@ -21,7 +21,8 @@ export interface Container {
   conversations: ConversationStore;
   /** Decrypts tenant secrets internally; never exposes them. */
   erp: (tenant: Tenant) => ErpClient;
-  chatwoot: (tenant: Tenant) => ChatwootClient;
+  /** `staff` = the team's separate WhatsApp number (falls back to the customer inbox when not configured). */
+  chatwoot: (tenant: Tenant, channel?: 'customer' | 'staff') => ChatwootClient;
   payments: PaymentProvider;
   /** The tenant's own Razorpay account for invoice payment links (undefined until connected). */
   razorpay: (tenant: Tenant) => RazorpayClient | undefined;

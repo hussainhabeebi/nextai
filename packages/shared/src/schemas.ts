@@ -23,6 +23,40 @@ export const reminderScheduleSchema = z.object({
   hourLocal: z.number().int().min(0).max(23).default(10),
 });
 
+/** Lead-to-customer lifecycle settings (used by tenants with an installed playbook). */
+export const lifecycleSettingsSchema = z.object({
+  /** Morning WhatsApp digest to each staff member: their overdue and due-today steps. */
+  digestEnabled: z.boolean().default(true),
+  digestHourLocal: z.number().int().min(0).max(23).default(9),
+  /** Project health score (0-100) below which management is alerted at the day-7 / day-30 reviews. */
+  healthThreshold: z.number().int().min(0).max(100).default(60),
+  /** What the AI chases the customer for during kickoff / data collection. */
+  dataChecklist: z.array(z.string().min(1).max(80)).max(20).default(['Product list', 'Prices', 'FAQs', 'Logo', 'Business hours']),
+  /** A WhatsApp message from a known Customer with no open step creates (or comments on) an ERPNext Issue. */
+  autoIssueFromWhatsApp: z.boolean().default(true),
+});
+export type LifecycleSettings = z.infer<typeof lifecycleSettingsSchema>;
+
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+/** Virtual office (team on the separate staff WhatsApp number). Times are tenant-local. */
+export const officeSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** JS weekdays: 0 = Sunday … 6 = Saturday. */
+  workDays: z.array(z.number().int().min(0).max(6)).default([1, 2, 3, 4, 5, 6]),
+  workStart: hhmm.default('09:00'),
+  /** Check-ins after workStart + this are late; not-checked-in staff are nudged then. */
+  lateAfterMinutes: z.number().int().min(0).max(240).default(15),
+  endOfDay: hhmm.default('18:00'),
+  standupEnabled: z.boolean().default(true),
+  /** AI summary of the team's day to management, one hour after endOfDay. */
+  teamSummaryEnabled: z.boolean().default(true),
+  meetingReminderMinutes: z.number().int().min(1).max(240).default(15),
+  weeklyReport: z.object({ enabled: z.boolean().default(true), weekday: z.number().int().min(0).max(6).default(1), hourLocal: z.number().int().min(0).max(23).default(9) }).default({}),
+  /** Create ERPNext Attendance (Present) at check-out for staff with an ERPNext Employee id. */
+  attendanceErpSync: z.boolean().default(false),
+});
+export type OfficeSettings = z.infer<typeof officeSettingsSchema>;
+
 export const tenantSettingsSchema = z.object({
   taxRegime: z.enum(['gst_regular', 'gst_composition', 'vat', 'vat_ct', 'none']).default('gst_regular'),
   /** Which filings apply, for deadline warnings. */
@@ -66,6 +100,8 @@ export const tenantSettingsSchema = z.object({
     .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
     .default({}),
   featureFlags: z.record(z.boolean()).default({}),
+  lifecycle: lifecycleSettingsSchema.default({}),
+  office: officeSettingsSchema.default({}),
   /** Industry layout of the customer app: entry menus, labels and screens. */
   appView: z.enum(APP_VIEWS).default('general'),
   /** Colour theme of the customer app. */

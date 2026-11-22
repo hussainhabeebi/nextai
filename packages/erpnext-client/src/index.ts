@@ -4,6 +4,7 @@
  * Only these endpoints are used:
  *   GET/POST/PUT  /api/resource/:doctype[/:name]
  *   POST          /api/method/frappe.client.cancel
+ *   POST          /api/method/frappe.desk.form.assign_to.add
  *   POST          /api/method/upload_file
  *   GET           /api/method/frappe.utils.print_format.download_pdf
  *   POST          /api/method/frappe.desk.query_report.run
@@ -56,6 +57,8 @@ export interface ErpClient {
   update<T = ErpDoc>(doctype: string, name: string, patch: Record<string, unknown>): Promise<T>;
   submit<T = ErpDoc>(doctype: string, name: string): Promise<T>;
   cancel(doctype: string, name: string): Promise<void>;
+  /** Assign a document to ERPNext users (creates ToDo entries visible in their desk). */
+  assign(doctype: string, name: string, users: string[], description?: string): Promise<void>;
   uploadFile(
     file: { filename: string; content: Uint8Array; mime: string },
     attachTo?: { doctype: string; name: string },
@@ -251,6 +254,11 @@ export class HttpErpClient implements ErpClient {
 
   async cancel(doctype: string, name: string): Promise<void> {
     await this.request('/api/method/frappe.client.cancel', this.jsonInit('POST', { doctype, name }));
+  }
+
+  async assign(doctype: string, name: string, users: string[], description?: string): Promise<void> {
+    if (users.length === 0) return;
+    await this.request('/api/method/frappe.desk.form.assign_to.add', this.jsonInit('POST', { doctype, name, assign_to: users, description }));
   }
 
   async uploadFile(

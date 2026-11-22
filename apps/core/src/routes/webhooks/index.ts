@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { Container } from '../../container.js';
 import { chatwootWebhook } from './chatwoot.js';
 import { erpnextWebhook } from './erpnext.js';
+import { leadvyneWebhook } from './leadvyne.js';
 import { stripeWebhook } from './stripe.js';
 import { razorpayWebhook } from './razorpay.js';
 
@@ -11,5 +12,6 @@ export const webhookRoutes =
     await app.register(chatwootWebhook(c));
     await app.register(erpnextWebhook(c));
     await app.register(stripeWebhook(c));
+    await app.register(leadvyneWebhook(c));
     await app.register(razorpayWebhook(c));
   };

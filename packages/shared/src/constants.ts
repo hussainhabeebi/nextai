@@ -95,6 +95,9 @@ export const QUEUES = {
   usageRollup: 'usage.rollup',
   billingSync: 'billing.sync',
   healthErpnext: 'health.erpnext',
+  lifecycleEvent: 'lifecycle.event',
+  lifecycleScan: 'lifecycle.scan',
+  officeTick: 'office.tick',
   reportAdminDaily: 'report.admin_daily',
   tenantSetup: 'tenant.setup',
   deadLetter: 'dead-letter',
@@ -108,3 +111,9 @@ export const SMALL_EXPENSE_THRESHOLD: Record<Currency, number> = { INR: 2000, AE
 export const CONVERSATION_TTL_SECONDS = 60 * 60 * 24;
 export const OTP_TTL_SECONDS = 300;
 export const OTP_MAX_ATTEMPTS = 5;
+
+/** Lead-to-customer lifecycle (mirrors the Prisma enums LifecycleRole / ReminderAudience). */
+export const LIFECYCLE_ROLES = ['sales', 'accountant', 'collections', 'onboarding', 'qa', 'support', 'ai_manager', 'management'] as const;
+export type LifecycleRoleName = (typeof LIFECYCLE_ROLES)[number];
+export const REMINDER_AUDIENCES = ['owner', 'escalation', 'customer', 'management'] as const;
+export type ReminderAudienceName = (typeof REMINDER_AUDIENCES)[number];

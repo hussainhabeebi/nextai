@@ -8,6 +8,7 @@ import { sha256 } from '../../lib/crypto.js';
 import { tenantDb } from '../../lib/db.js';
 import { tenantKey } from '../../storage/storage.js';
 import { handleText } from '../intents/flow.js';
+import { handleCustomerReply } from '../lifecycle/replies.js';
 import { incrementUsage } from '../usage/usage.js';
 import { planLimits, usageFor } from '../billing/gating.js';
 import type { BotContext } from './context.js';
@@ -25,7 +26,7 @@ const EXT: Record<string, string> = {
   'audio/wav': 'wav',
 };
 
-export type InboundOutcome = 'ignored_unknown_user' | 'billing_blocked' | 'attachments_queued' | 'text_handled' | 'empty';
+export type InboundOutcome = 'customer_reply' | 'ignored_unknown_user' | 'billing_blocked' | 'attachments_queued' | 'text_handled' | 'empty';
 
 /** Handle one verified, de-duplicated, incoming WhatsApp message for a resolved tenant. */
 export async function handleIncoming(c: Container, tenant: Tenant, evt: ChatwootWebhook): Promise<InboundOutcome> {
@@ -39,6 +40,8 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
   const user = phone ? await db.user.findFirst({ where: { tenantId: tenant.id, phone, status: { not: 'disabled' } } }) : null;
 
   if (!user) {
+    // Customers of a tenant running the lifecycle playbook (data, monthly updates, support, feedback).
+    if (phone && (await handleCustomerReply(c, tenant, evt, phone))) return 'customer_reply';
     // Unknown numbers on a tenant inbox: polite onboarding message once per conversation, then ignore.
     const state = await c.conversations.get(tenant.id, conversationId);
     if (state.step !== 'handover') {

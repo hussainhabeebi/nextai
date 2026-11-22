@@ -5,6 +5,10 @@ import { withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { erpContext } from '../erpnext/mappers.js';
 import { localHour, scanReminders, sendDailySummary } from '../outbound/jobs.js';
+import { scanTimers } from '../lifecycle/engine.js';
+import { sendStaffDigests } from '../lifecycle/digest.js';
+import { startMonthlyUpdates } from '../lifecycle/events.js';
+import { officeTick } from '../office/schedule.js';
 import { sendDeadlineWarnings } from '../briefing/briefing.js';
 import { currentPeriod } from '../usage/usage.js';
 
@@ -44,6 +48,21 @@ export function scheduleDailySummary(c: Container, at = new Date()) {
       await sendDailySummary(c, t, at);
     }
   });
+}
+
+/** lifecycle.scan — every 5 minutes: monthly bot-update timers, due reminder levels, then the morning staff digest. */
+export async function lifecycleScan(c: Container, at = new Date()) {
+  const monthly = await forEachTenant(c, async (t) => {
+    if (t.erpApiKeyEnc) await startMonthlyUpdates(c, t, at);
+  });
+  const scan = await scanTimers(c, at);
+  const digests = await forEachTenant(c, (t) => sendStaffDigests(c, t, at));
+  return { monthly, digests, ...scan };
+}
+
+/** office.tick — every 5 minutes: attendance nudges, end of day, team summary, meetings, weekly report. */
+export function scheduleOffice(c: Container, at = new Date()) {
+  return forEachTenant(c, (t) => officeTick(c, t, at));
 }
 
 /** schedule.deadlines — runs hourly; tax deadline warnings at each tenant's briefing hour. */
@@ -92,5 +111,7 @@ export const SCHEDULE_QUEUES = {
   [QUEUES.usageRollup]: '15 * * * *',
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',
+  [QUEUES.lifecycleScan]: '*/5 * * * *',
+  [QUEUES.officeTick]: '*/5 * * * *',
   [QUEUES.reportAdminDaily]: '10 4 * * *', // 08:10 Dubai / 09:40 India
 } as const;

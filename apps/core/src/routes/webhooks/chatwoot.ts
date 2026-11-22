@@ -4,6 +4,7 @@ import { env, isProd } from '../../config/env.js';
 import type { Container } from '../../container.js';
 import { withSystemTx } from '../../lib/db.js';
 import { handleIncoming } from '../../modules/chatwoot/inbound.js';
+import { handleStaffMessage } from '../../modules/office/assistant.js';
 import { claimEvent, markProcessed } from '../../modules/webhooks/idempotency.js';
 import { ipAllowed, verifyChatwoot } from '../../modules/webhooks/verify.js';
 import { traceWebhook } from '../../modules/chatwoot/diagnostics.js';
@@ -59,17 +60,19 @@ export const chatwootWebhook =
       if (!isProcessableIncoming(evt) || !evt.id || !evt.conversation || !evt.inbox) return { status: 'ignored' };
 
       // Tenant resolution ONLY from inbox mapping.
-      const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUnique({ where: { cwInboxId: evt.inbox!.id } }));
+      const inboxId = evt.inbox.id;
+      const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findFirst({ where: { OR: [{ cwInboxId: inboxId }, { cwStaffInboxId: inboxId }] } }));
       if (!tenant) {
-        await traceWebhook(c.redis, { result: 'unknown_inbox', ip, inboxId: evt.inbox.id, detail: `Inbox ${evt.inbox.id} is not connected to any business` });
+        await traceWebhook(c.redis, { result: 'unknown_inbox', ip, inboxId, detail: `Inbox ${inboxId} is not connected to any business` });
         return { status: 'unknown_inbox' };
       }
-      await traceWebhook(c.redis, { result: 'accepted', ip, inboxId: evt.inbox.id, detail: tenant.name });
+      await traceWebhook(c.redis, { result: 'accepted', ip, inboxId, detail: tenant.cwStaffInboxId === inboxId ? `${tenant.name} (staff number)` : tenant.name });
 
       const claim = await claimEvent(c.prisma, 'chatwoot', `msg:${evt.id}`, { id: evt.id, conversation: evt.conversation.id, inbox: evt.inbox.id }, tenant.id);
       if (!claim.first) return { status: 'duplicate' };
       try {
-        const outcome = await handleIncoming(c, tenant, evt);
+        // The team's separate number goes to the virtual-office assistant.
+        const outcome = tenant.cwStaffInboxId === inboxId ? await handleStaffMessage(c, tenant, evt) : await handleIncoming(c, tenant, evt);
         await markProcessed(c.prisma, claim.id);
         return { status: outcome };
       } catch (err) {

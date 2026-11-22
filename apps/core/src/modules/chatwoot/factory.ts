@@ -4,7 +4,7 @@ import { env } from '../../config/env.js';
 import { decrypt } from '../../lib/crypto.js';
 
 /** The only place the Chatwoot bot token is decrypted. */
-export function chatwootClientFor(tenant: Tenant): ChatwootClient {
+export function chatwootClientFor(tenant: Tenant, channel: 'customer' | 'staff' = 'customer'): ChatwootClient {
   if (!tenant.cwAccountId || !tenant.cwInboxId || !tenant.cwBotTokenEnc) {
     throw new Error(`Tenant ${tenant.id} has no Chatwoot connection`);
   }
@@ -13,7 +13,7 @@ export function chatwootClientFor(tenant: Tenant): ChatwootClient {
     {
       baseUrl: e.CHATWOOT_BASE_URL,
       accountId: tenant.cwAccountId,
-      inboxId: tenant.cwInboxId,
+      inboxId: channel === 'staff' ? (tenant.cwStaffInboxId ?? tenant.cwInboxId) : tenant.cwInboxId,
       botToken: decrypt(tenant.cwBotTokenEnc, `cw_bot:${tenant.id}`),
     },
     { attachmentHosts: [new URL(e.CHATWOOT_BASE_URL).hostname, ...e.CHATWOOT_ATTACHMENT_HOSTS] },

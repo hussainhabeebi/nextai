@@ -9,7 +9,8 @@ import { processStatementJob } from '../modules/banking/jobs.js';
 import { sendInvoice, sendReceipt, sendReminder } from '../modules/outbound/jobs.js';
 import { billingSync } from '../modules/billing/service.js';
 import { sendAdminDailyReport } from '../modules/email/reports.js';
-import { healthErpnext, scheduleDailySummary, scheduleDeadlines, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
+import { LIFECYCLE_DOCTYPES, LIFECYCLE_EVENTS, handleLifecycleEvent } from '../modules/lifecycle/events.js';
+import { healthErpnext, lifecycleScan, scheduleDailySummary, scheduleDeadlines, scheduleOffice, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
 
 const tenantId = z.string().uuid();
 export const jobSchemas = {
@@ -20,6 +21,7 @@ export const jobSchemas = {
   [QUEUES.outboundInvoice]: z.object({ tenantId, invoiceName: z.string(), draftId: z.string().uuid().optional() }),
   [QUEUES.outboundReceipt]: z.object({ tenantId, paymentName: z.string() }),
   [QUEUES.outboundReminder]: z.object({ tenantId, invoiceName: z.string().optional(), party: z.string().optional(), conversationId: z.number().optional() }),
+  [QUEUES.lifecycleEvent]: z.object({ tenantId, doctype: z.enum(LIFECYCLE_DOCTYPES), name: z.string().min(1).max(140), event: z.enum(LIFECYCLE_EVENTS) }),
   [QUEUES.bankStatement]: z.object({ tenantId, r2Key: z.string(), mime: z.string(), name: z.string().optional(), conversationId: z.number().optional(), userId: z.string().uuid().optional() }),
 } as const;
 const fanOut = z.object({ tenantId: z.literal('*') });
@@ -40,6 +42,9 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.outboundInvoice]: (d) => sendInvoice(c, jobSchemas[QUEUES.outboundInvoice].parse(d)),
     [QUEUES.outboundReceipt]: (d) => sendReceipt(c, jobSchemas[QUEUES.outboundReceipt].parse(d)),
     [QUEUES.outboundReminder]: (d) => sendReminder(c, jobSchemas[QUEUES.outboundReminder].parse(d)),
+    [QUEUES.lifecycleEvent]: (d) => handleLifecycleEvent(c, jobSchemas[QUEUES.lifecycleEvent].parse(d)),
+    [QUEUES.lifecycleScan]: (d) => (fanOut.parse(d), lifecycleScan(c)),
+    [QUEUES.officeTick]: (d) => (fanOut.parse(d), scheduleOffice(c)),
     [QUEUES.scheduleReminders]: (d) => (fanOut.parse(d), scheduleReminders(c)),
     [QUEUES.scheduleDailySummary]: (d) => (fanOut.parse(d), scheduleDailySummary(c)),
     [QUEUES.scheduleDeadlines]: (d) => (fanOut.parse(d), scheduleDeadlines(c)),
