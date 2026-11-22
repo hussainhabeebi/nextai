@@ -18,6 +18,14 @@ async function loadTenant(c: Container, tenantId: string): Promise<Tenant> {
   return withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: tenantId } }));
 }
 
+async function lastSent(c: Container, tenantId: string, kind: string, ref: string, sinceMs: number): Promise<Date | undefined> {
+  const hit = await tenantDb(c.prisma, tenantId).outboundMessage.findFirst({
+    where: { kind, ref, status: 'sent', createdAt: { gte: new Date(Date.now() - sinceMs) } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return hit?.createdAt;
+}
+
 async function alreadySent(c: Container, tenantId: string, kind: string, ref: string, sinceMs = 0): Promise<boolean> {
   const hit = await tenantDb(c.prisma, tenantId).outboundMessage.findFirst({
     where: { kind, ref, status: 'sent', createdAt: sinceMs ? { gte: new Date(Date.now() - sinceMs) } : undefined },
@@ -135,11 +143,20 @@ export async function sendReminder(
     return { skipped: 'nothing_outstanding' };
   }
   let sent = 0;
+  const noPhone: SI[] = [];
+  const recent: Array<{ inv: SI; at: Date }> = [];
   for (const inv of invoices) {
     // at most one reminder per invoice per 20h
-    if (await alreadySent(c, tenant.id, 'reminder', inv.name, 20 * 3600_000)) continue;
+    const last = await lastSent(c, tenant.id, 'reminder', inv.name, 20 * 3600_000);
+    if (last) {
+      recent.push({ inv, at: last });
+      continue;
+    }
     const phone = await customerPhone(c, tenant, inv.customer);
-    if (!phone) continue;
+    if (!phone) {
+      noPhone.push(inv);
+      continue;
+    }
     const cur = (inv.currency ?? tenant.currency) as Currency;
     const amount = formatMoney(inv.outstanding_amount, cur);
     const payUrl = await linkOrNothing(c, tenant, inv, phone);
@@ -154,8 +171,53 @@ export async function sendReminder(
     });
     sent++;
   }
-  await reply(sent ? `⏰ Sent ${sent} reminder(s).` : 'No reminder sent (no WhatsApp number on file or reminded recently).');
-  return { sent };
+
+  const tz = erpContext(tenant).settings.timezone;
+  const who = job.party ? invoices[0]!.customer : undefined;
+  const status: string[] = [];
+  if (sent) status.push(`✅ Sent ${sent} reminder${sent === 1 ? '' : 's'}${who ? ` to ${who}` : ''}.`);
+  if (recent.length) {
+    const at = new Intl.DateTimeFormat('en-IN', { timeZone: tz, hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' }).format(recent[0]!.at);
+    status.push(`⏳ Already reminded about ${recent.map((r) => r.inv.name).join(', ')} (last at ${at}). I wait 20 hours between reminders.`);
+  }
+  if (noPhone.length) {
+    status.push(`📵 No WhatsApp number on file for ${[...new Set(noPhone.map((i) => i.customer))].join(', ')}.`);
+    status.push(`📋 I've made a ready reminder below — forward it to them.`);
+    status.push(`💡 Add their mobile number in ERPNext (Customer → Mobile No) and I'll send reminders myself next time.`);
+  }
+  await reply(status.join('\n'));
+  // Auto-created reminder the owner can forward by hand (one message per customer, easy to forward).
+  for (const [customer, list] of groupBy(noPhone, (i) => i.customer)) {
+    const links = new Map<string, string | undefined>();
+    for (const inv of list) links.set(inv.name, await linkOrNothing(c, tenant, inv));
+    await reply(reminderMessage(tenant, customer, list, links, localDate(tz)));
+  }
+  return { sent, ...(noPhone.length ? { noPhone: noPhone.length } : {}), ...(recent.length ? { recent: recent.length } : {}) };
+}
+
+const groupBy = <T>(xs: T[], key: (x: T) => string) => {
+  const m = new Map<string, T[]>();
+  for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
+  return m;
+};
+
+const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** A polite, structured payment reminder for the customer, ready to forward. */
+export function reminderMessage(tenant: Tenant, customer: string, invoices: SI[], payLinks: Map<string, string | undefined>, today: string): string {
+  const m = (inv: SI) => formatMoney(inv.outstanding_amount, (inv.currency ?? tenant.currency) as Currency);
+  const total = invoices.reduce((s, i) => s + i.outstanding_amount, 0);
+  const lines = [`Hi ${customer} 👋`, '', `This is a friendly payment reminder from *${tenant.name}*.`, '', '━━━━━━━━━━━━━━━━━━'];
+  for (const inv of invoices) {
+    const late = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${inv.due_date}T00:00:00Z`)) / 86400_000);
+    lines.push(`🧾 Invoice *${inv.name}*`, `💰 Amount due: *${m(inv)}*`, `📅 Due date: ${shortDate(inv.due_date)}${late > 0 ? ` (${late} day${late === 1 ? '' : 's'} overdue)` : ''}`);
+    const link = payLinks.get(inv.name);
+    if (link) lines.push(`💳 Pay online: ${link}`);
+    lines.push('━━━━━━━━━━━━━━━━━━');
+  }
+  if (invoices.length > 1) lines.push(`*Total due: ${formatMoney(total, (invoices[0]!.currency ?? tenant.currency) as Currency)}*`);
+  lines.push('', 'Kindly arrange the payment at the earliest. If you have already paid, please ignore this message 🙏', '', `Thank you,`, `${tenant.name}`);
+  return lines.join('\n');
 }
 
 export { localDate, localHour } from './time.js';
