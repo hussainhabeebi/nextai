@@ -6,7 +6,8 @@ import { processOcr } from '../modules/ocr/pipeline.js';
 import { processVoice } from '../modules/voice/pipeline.js';
 import { sendInvoice, sendReceipt, sendReminder } from '../modules/outbound/jobs.js';
 import { billingSync } from '../modules/billing/service.js';
-import { healthErpnext, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
+import { LIFECYCLE_DOCTYPES, LIFECYCLE_EVENTS, handleLifecycleEvent } from '../modules/lifecycle/events.js';
+import { healthErpnext, lifecycleScan, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
 
 const tenantId = z.string().uuid();
 export const jobSchemas = {
@@ -16,6 +17,7 @@ export const jobSchemas = {
   [QUEUES.outboundInvoice]: z.object({ tenantId, invoiceName: z.string(), draftId: z.string().uuid().optional() }),
   [QUEUES.outboundReceipt]: z.object({ tenantId, paymentName: z.string() }),
   [QUEUES.outboundReminder]: z.object({ tenantId, invoiceName: z.string().optional(), party: z.string().optional(), conversationId: z.number().optional() }),
+  [QUEUES.lifecycleEvent]: z.object({ tenantId, doctype: z.enum(LIFECYCLE_DOCTYPES), name: z.string().min(1).max(140), event: z.enum(LIFECYCLE_EVENTS) }),
 } as const;
 const fanOut = z.object({ tenantId: z.literal('*') });
 
@@ -33,6 +35,8 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.outboundInvoice]: (d) => sendInvoice(c, jobSchemas[QUEUES.outboundInvoice].parse(d)),
     [QUEUES.outboundReceipt]: (d) => sendReceipt(c, jobSchemas[QUEUES.outboundReceipt].parse(d)),
     [QUEUES.outboundReminder]: (d) => sendReminder(c, jobSchemas[QUEUES.outboundReminder].parse(d)),
+    [QUEUES.lifecycleEvent]: (d) => handleLifecycleEvent(c, jobSchemas[QUEUES.lifecycleEvent].parse(d)),
+    [QUEUES.lifecycleScan]: (d) => (fanOut.parse(d), lifecycleScan(c)),
     [QUEUES.scheduleReminders]: (d) => (fanOut.parse(d), scheduleReminders(c)),
     [QUEUES.scheduleDailySummary]: (d) => (fanOut.parse(d), scheduleDailySummary(c)),
     [QUEUES.usageRollup]: (d) => (fanOut.parse(d), usageRollup(c)),

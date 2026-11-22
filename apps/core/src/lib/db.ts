@@ -25,6 +25,10 @@ export const TENANT_MODELS = new Set<string>([
   'OutboundMessage',
   'PushSubscription',
   'WebhookEvent',
+  'StaffMember',
+  'LifecycleRule',
+  'ReminderLevel',
+  'LifecycleTimer',
 ]);
 
 const WHERE_OPS = new Set([

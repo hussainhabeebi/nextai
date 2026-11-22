@@ -93,6 +93,33 @@ enum WebhookSource {
   chatwoot
   erpnext
   stripe
+  leadvyne
+}
+
+/// Who owns a lifecycle step. Rules name roles, not people, so reassigning work is a data change.
+enum LifecycleRole {
+  sales
+  accountant
+  collections
+  onboarding
+  qa
+  support
+  ai_manager
+  management
+}
+
+/// Who a reminder level goes to: the step owner, the rule's escalation role, the customer, or management.
+enum ReminderAudience {
+  owner
+  escalation
+  customer
+  management
+}
+
+enum LifecycleTimerStatus {
+  open
+  done
+  cancelled
 }
 
 enum SessionKind {
@@ -101,27 +128,29 @@ enum SessionKind {
 }
 
 model Tenant {
-  id              String       @id @default(uuid()) @db.Uuid
-  name            String
-  slug            String       @unique
-  country         Country
-  currency        String       @db.VarChar(3)
-  language        String       @default("en") @db.VarChar(5)
-  status          TenantStatus @default(trial)
-  erpSiteUrl      String?      @map("erp_site_url")
-  erpApiKeyEnc    String?      @map("erp_api_key_enc")
-  erpApiSecretEnc String?      @map("erp_api_secret_enc")
-  erpWebhookSecretEnc String?  @map("erp_webhook_secret_enc")
-  cwAccountId     Int?         @map("cw_account_id")
-  cwInboxId       Int?         @unique @map("cw_inbox_id")
-  cwBotTokenEnc   String?      @map("cw_bot_token_enc")
-  planId          String?      @map("plan_id") @db.Uuid
-  settings        Json         @default("{}")
-  trialEndsAt     DateTime?    @map("trial_ends_at")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  id                   String       @id @default(uuid()) @db.Uuid
+  name                 String
+  slug                 String       @unique
+  country              Country
+  currency             String       @db.VarChar(3)
+  language             String       @default("en") @db.VarChar(5)
+  status               TenantStatus @default(trial)
+  erpSiteUrl           String?      @map("erp_site_url")
+  erpApiKeyEnc         String?      @map("erp_api_key_enc")
+  erpApiSecretEnc      String?      @map("erp_api_secret_enc")
+  erpWebhookSecretEnc  String?      @map("erp_webhook_secret_enc")
+  cwAccountId          Int?         @map("cw_account_id")
+  cwInboxId            Int?         @unique @map("cw_inbox_id")
+  cwBotTokenEnc        String?      @map("cw_bot_token_enc")
+  /// HMAC secret for the lead-capture webhook (Leadvyne). AES-GCM, AAD = lead_webhook:{tenant id}
+  leadWebhookSecretEnc String?      @map("lead_webhook_secret_enc")
+  planId               String?      @map("plan_id") @db.Uuid
+  settings             Json         @default("{}")
+  trialEndsAt          DateTime?    @map("trial_ends_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
 
-  plan            Plan?            @relation(fields: [planId], references: [id])
+  plan            Plan?              @relation(fields: [planId], references: [id])
   users           User[]
   documents       Document[]
   drafts          Draft[]
@@ -131,6 +160,9 @@ model Tenant {
   auditLogs       AuditLog[]
   pushSubs        PushSubscription[]
   outbound        OutboundMessage[]
+  staffMembers    StaffMember[]
+  lifecycleRules  LifecycleRule[]
+  lifecycleTimers LifecycleTimer[]
 
   @@map("tenants")
 }
@@ -151,10 +183,10 @@ model User {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  tenant        Tenant?       @relation(fields: [tenantId], references: [id])
-  drafts        Draft[]
-  sessions      Session[]
-  webauthn      WebAuthnCredential[]
+  tenant   Tenant?              @relation(fields: [tenantId], references: [id])
+  drafts   Draft[]
+  sessions Session[]
+  webauthn WebAuthnCredential[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -175,7 +207,7 @@ model Session {
   revokedAt   DateTime?   @map("revoked_at")
   createdAt   DateTime    @default(now()) @map("created_at")
 
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("sessions")
@@ -190,7 +222,7 @@ model WebAuthnCredential {
   transports   String[]
   createdAt    DateTime @default(now()) @map("created_at")
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("webauthn_credentials")
 }
@@ -208,8 +240,8 @@ model Document {
   uploadedBy String?        @map("uploaded_by") @db.Uuid
   createdAt  DateTime       @default(now()) @map("created_at")
 
-  tenant     Tenant         @relation(fields: [tenantId], references: [id])
-  drafts     Draft[]
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
+  drafts Draft[]
 
   @@unique([tenantId, sha256])
   @@index([tenantId])
@@ -233,9 +265,9 @@ model Draft {
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
 
-  tenant         Tenant      @relation(fields: [tenantId], references: [id])
-  user           User?       @relation(fields: [userId], references: [id])
-  document       Document?   @relation(fields: [documentId], references: [id])
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+  document Document? @relation(fields: [documentId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -253,7 +285,7 @@ model VendorMapping {
   hits           Int      @default(0)
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([tenantId, supplierName])
   @@index([tenantId])
@@ -270,7 +302,7 @@ model Plan {
   providerPriceIds Json     @default("{}") @map("provider_price_ids") // { "stripe": { "INR": "price_..", "AED": "price_.." } }
   active           Boolean  @default(true)
 
-  tenants          Tenant[]
+  tenants Tenant[]
 
   @@map("plans")
 }
@@ -288,7 +320,7 @@ model Subscription {
   createdAt              DateTime            @default(now()) @map("created_at")
   updatedAt              DateTime            @updatedAt @map("updated_at")
 
-  tenant                 Tenant              @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@index([providerCustomerId])
@@ -305,7 +337,7 @@ model UsageCounter {
   aiCostMicros BigInt @default(0) @map("ai_cost_micros")
   invoicesSent Int    @default(0) @map("invoices_sent")
 
-  tenant       Tenant @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([tenantId, period])
   @@index([tenantId])
@@ -326,7 +358,7 @@ model AuditLog {
   ip        String?
   createdAt DateTime  @default(now()) @map("created_at")
 
-  tenant    Tenant?   @relation(fields: [tenantId], references: [id])
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, createdAt])
   @@index([action])
@@ -358,7 +390,7 @@ model OutboundMessage {
   error          String?
   createdAt      DateTime @default(now()) @map("created_at")
 
-  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, createdAt])
   @@map("outbound_messages")
@@ -372,7 +404,7 @@ model PushSubscription {
   keys      Json
   createdAt DateTime @default(now()) @map("created_at")
 
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@map("push_subscriptions")
@@ -400,4 +432,100 @@ model MessageTemplate {
 
   @@unique([key, language])
   @@map("message_templates")
+}
+
+// ---------------- Lead-to-customer lifecycle ----------------
+
+/// Internal team member who receives lifecycle reminders (WhatsApp) and ERPNext assignments.
+model StaffMember {
+  id        String          @id @default(uuid()) @db.Uuid
+  tenantId  String          @map("tenant_id") @db.Uuid
+  name      String
+  phone     String // E.164
+  erpUser   String?         @map("erp_user") // ERPNext user id (email), used for assignments
+  roles     LifecycleRole[]
+  active    Boolean         @default(true)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id])
+  timers LifecycleTimer[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@map("staff_members")
+}
+
+/// One step of the playbook (e.g. "lead.first_call"). Editable and switchable from the admin console.
+model LifecycleRule {
+  id             String        @id @default(uuid()) @db.Uuid
+  tenantId       String        @map("tenant_id") @db.Uuid
+  key            String
+  stage          Int
+  name           String
+  description    String?
+  ownerRole      LifecycleRole @map("owner_role")
+  escalationRole LifecycleRole @default(accountant) @map("escalation_role")
+  enabled        Boolean       @default(true)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id])
+  levels ReminderLevel[]
+  timers LifecycleTimer[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+  @@map("lifecycle_rules")
+}
+
+/// A reminder level of a rule: fires `offsetMinutes` after the timer's anchor (negative = before).
+model ReminderLevel {
+  id            String           @id @default(uuid()) @db.Uuid
+  tenantId      String           @map("tenant_id") @db.Uuid
+  ruleId        String           @map("rule_id") @db.Uuid
+  level         Int
+  offsetMinutes Int              @map("offset_minutes")
+  audience      ReminderAudience
+  templateKey   String           @default("lifecycle_notice") @map("template_key")
+  /// Text with {{placeholders}}; also the fallback when no WhatsApp template is mapped.
+  message       String
+  enabled       Boolean          @default(true)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  rule LifecycleRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, level])
+  @@index([tenantId])
+  @@map("reminder_levels")
+}
+
+/// A running rule for one ERPNext document (e.g. Lead CRM-LEAD-0001). Closed when the step is done.
+model LifecycleTimer {
+  id            String               @id @default(uuid()) @db.Uuid
+  tenantId      String               @map("tenant_id") @db.Uuid
+  ruleId        String               @map("rule_id") @db.Uuid
+  doctype       String
+  docName       String               @map("doc_name")
+  anchorAt      DateTime             @map("anchor_at")
+  ownerStaffId  String?              @map("owner_staff_id") @db.Uuid
+  customerName  String?              @map("customer_name")
+  customerPhone String?              @map("customer_phone")
+  context       Json                 @default("{}")
+  status        LifecycleTimerStatus @default(open)
+  /// Level numbers already sent (or skipped as stale) — makes the scan idempotent.
+  sentLevels    Int[]                @default([]) @map("sent_levels")
+  completedAt   DateTime?            @map("completed_at")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id])
+  rule   LifecycleRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  owner  StaffMember?  @relation(fields: [ownerStaffId], references: [id])
+
+  @@unique([ruleId, doctype, docName])
+  @@index([tenantId, status])
+  @@index([status, anchorAt])
+  @@map("lifecycle_timers")
 }

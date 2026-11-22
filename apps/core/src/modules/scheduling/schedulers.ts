@@ -5,6 +5,8 @@ import { withSystemTx } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { erpContext } from '../erpnext/mappers.js';
 import { localHour, scanReminders, sendDailySummary } from '../outbound/jobs.js';
+import { scanTimers } from '../lifecycle/engine.js';
+import { startMonthlyUpdates } from '../lifecycle/events.js';
 import { currentPeriod } from '../usage/usage.js';
 
 /** Cross-tenant fan-out uses the system context (audited by design: read-only selection of tenants). */
@@ -45,6 +47,14 @@ export function scheduleDailySummary(c: Container, at = new Date()) {
   });
 }
 
+/** lifecycle.scan — every 5 minutes: start the monthly bot-update timers when due, then send due reminder levels. */
+export async function lifecycleScan(c: Container, at = new Date()) {
+  const monthly = await forEachTenant(c, async (t) => {
+    if (t.erpApiKeyEnc) await startMonthlyUpdates(c, t, at);
+  });
+  return { monthly, ...(await scanTimers(c, at)) };
+}
+
 /** usage.rollup — hourly snapshot of per-tenant usage into Redis for the admin dashboard. */
 export async function usageRollup(c: Container) {
   const period = currentPeriod();
@@ -82,4 +92,5 @@ export const SCHEDULE_QUEUES = {
   [QUEUES.usageRollup]: '15 * * * *',
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',
+  [QUEUES.lifecycleScan]: '*/5 * * * *',
 } as const;
