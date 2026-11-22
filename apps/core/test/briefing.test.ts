@@ -65,10 +65,11 @@ describe('daily briefing and deadline warnings', () => {
   it('lists who to chase, the next deadline with what blocks filing, approvals and bank lines', async () => {
     const b = await buildBriefing(c, A.tenant, new Date('2026-11-17T04:00:00Z'));
     expect(b.day).toBe('2026-11-17');
-    expect(b.text).toMatch(/To collect: Ravi Traders ₹12,000.00 \(18 days late\)/);
+    expect(b.text).toMatch(/☀️ \*Daily Report\* · Tue, 17 Nov 2026/);
+    expect(b.text).toMatch(/💸 \*TO COLLECT\* · ₹12,000.00\n1️⃣ Ravi Traders\n\s+₹12,000.00 · 🟠 18 days late/);
     expect(b.text).not.toMatch(/Not Due Yet/);
-    expect(b.text).toMatch(/Reply "remind Ravi Traders"/);
-    expect(b.text).toMatch(/📅 GSTR-3B for October 2026: due 20 Nov \(in 3 days\)/);
+    expect(b.text).toMatch(/Reply \*remind Ravi Traders\*/);
+    expect(b.text).toMatch(/▫️ GSTR-3B for October 2026: due 20 Nov \(in 3 days\)/);
     expect(b.text).toMatch(/Before filing: 1 entry waiting for approval in NextAi · 1 purchase bill without the supplier's GSTIN/);
     expect(b.text).toMatch(/⏳ 1 item needs your approval/);
     expect(b.text).toMatch(/🏦 1 bank line to check/);
@@ -77,7 +78,7 @@ describe('daily briefing and deadline warnings', () => {
   it('answers "briefing" on WhatsApp', async () => {
     c.chatwoot(A.tenant);
     await postCw(app, cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, content: 'briefing', conversationId: 7001 }));
-    expect(c.cws.get(A.tenant.id)!.lastText(7001)).toMatch(/☀️ .*\n.*Sales .* today[\s\S]*Cash & bank/);
+    expect(c.cws.get(A.tenant.id)!.lastText(7001)).toMatch(/☀️ \*Daily Report\*[\s\S]*🟢 Sales: [\s\S]*🏦 Cash & bank/);
   });
 
   it('warns the accountant 7, 2 and 0 days before, once each', async () => {

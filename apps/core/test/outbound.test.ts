@@ -84,9 +84,22 @@ describe('reminders', () => {
     await drainAll();
     const cw = c.cws.get(A.tenant.id)!;
     expect(cw.sent.filter((m) => m.template?.name === 'nextai_payment_reminder')).toHaveLength(1);
-    expect(cw.lastText(id)).toMatch(/Sent 1 reminder/);
-    const again = await sendReminder(c, { tenantId: A.tenant.id, party: 'Ravi' });
-    expect(again).toEqual({ sent: 0 });
+    expect(cw.lastText(id)).toMatch(/Sent 1 reminder to Ravi Traders/);
+    const again = await sendReminder(c, { tenantId: A.tenant.id, party: 'Ravi', conversationId: id });
+    expect(again).toEqual({ sent: 0, recent: 1 });
+    expect(cw.lastText(id)).toMatch(/Already reminded about .* I wait 20 hours/);
+  });
+
+  it('without a WhatsApp number, explains why and hands the owner a ready reminder to forward', async () => {
+    const erp = c.erp(A.tenant) as unknown as { create: (d: string, x: Record<string, unknown>) => Promise<{ name: string }>; docs: Map<string, Map<string, Record<string, unknown>>> };
+    await erp.create('Customer', { name: 'Nexora Academy', customer_name: 'Nexora Academy' });
+    const si = await erp.create('Sales Invoice', { customer: 'Nexora Academy', grand_total: 41300, outstanding_amount: 41300, due_date: '2026-10-20', currency: 'INR' });
+    erp.docs.get('Sales Invoice')!.get(si.name)!.docstatus = 1;
+    const id = ++conv;
+    expect(await sendReminder(c, { tenantId: A.tenant.id, party: 'Nexora', conversationId: id })).toEqual({ sent: 0, noPhone: 1 });
+    const texts = c.cws.get(A.tenant.id)!.sent.filter((m) => m.conversationId === id).map((m) => m.content);
+    expect(texts[0]).toMatch(/No WhatsApp number on file for Nexora Academy[\s\S]*ready reminder below[\s\S]*Customer → Mobile No/);
+    expect(texts[1]).toMatch(/Hi Nexora Academy 👋[\s\S]*friendly payment reminder from \*.+\*[\s\S]*🧾 Invoice \*.+\*\n💰 Amount due: \*₹41,300.00\*\n📅 Due date: 20 Oct 2026 \(\d+ days overdue\)/);
   });
 
   it('scans invoices due per configured offsets in tenant timezone', async () => {

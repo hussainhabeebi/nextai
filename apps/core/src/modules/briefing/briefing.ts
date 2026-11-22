@@ -23,6 +23,11 @@ export interface Blockers {
 }
 
 const short = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const long = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const RULE = '━━━━━━━━━━━━━━━━━━';
+const NUM = ['1️⃣', '2️⃣', '3️⃣'];
+const lateIcon = (days: number) => (days > 30 ? '🔴' : days > 7 ? '🟠' : '🟡');
 const inDays = (n: number) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`);
 
 /** What still has to be done before the books are ready to file. */
@@ -84,7 +89,7 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
         filters: [['docstatus', '=', 1], ['outstanding_amount', '>', 0], ['due_date', '<', day]],
         fields: ['name', 'customer', 'outstanding_amount', 'due_date'],
         orderBy: 'outstanding_amount desc',
-        limit: 3,
+        limit: 200,
       })
       .catch(() => [] as Overdue[]),
     db.draft.count({ where: { status: { in: ['pending', 'needs_review'] } } }),
@@ -97,25 +102,47 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
   const sales = totals ? m(totals.income) : 'not available';
   const expenses = totals ? m(totals.expenses) : 'not available';
   const cash = balances ? m(balances.cash + balances.bank) : 'not available right now';
-  const lines = [`☀️ ${tenant.name} · ${short(day)}`, `Sales ${sales} · Expenses ${expenses} today`, `Cash & bank: ${cash}`];
-  if (overdue.length) {
-    lines.push(`💸 To collect: ${overdue.map((o) => `${o.customer} ${m(o.outstanding_amount)} (${daysBetween(o.due_date, day)} days late)`).join(' · ')}`);
-    lines.push(`Reply "remind ${overdue[0]!.customer}" to send a reminder.`);
-  }
-  for (const d of deadlines.slice(0, 3)) {
-    lines.push(`📅 ${d.what}: due ${short(d.due)} (${inDays(daysBetween(day, d.due))})`);
-  }
+  const owed = overdue.reduce((s, o) => s + o.outstanding_amount, 0);
+  const top = overdue.slice(0, 3);
+  const todo = [
+    pending ? `⏳ ${pending} item${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your approval` : undefined,
+    bankToCheck ? `🏦 ${bankToCheck} bank line${bankToCheck === 1 ? '' : 's'} to check: reply *bank*` : undefined,
+  ].filter((x): x is string => !!x);
   const block = blockers && blockerText(blockers, tenant.country);
-  if (block) lines.push(`   ${block}`);
-  if (pending) lines.push(`⏳ ${pending} item${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your approval`);
-  if (bankToCheck) lines.push(`🏦 ${bankToCheck} bank line${bankToCheck === 1 ? '' : 's'} to check: reply "bank"`);
+
+  const lines = [RULE, `☀️ *Daily Report* · ${long(day)}`, `🏢 ${tenant.name}`, RULE, '', '📊 *TODAY*', `🟢 Sales: *${sales}*`, `🔴 Expenses: *${expenses}*`];
+  if (totals) {
+    const net = totals.income - totals.expenses;
+    lines.push(`${net >= 0 ? '📈' : '📉'} Net: *${m(net)}*`);
+  }
+  lines.push(`🏦 Cash & bank: ${balances ? `*${cash}*` : `_${cash}_`}`);
+
+  lines.push('', RULE, `💸 *TO COLLECT*${owed > 0 ? ` · ${m(owed)}` : ''}`);
+  if (top.length) {
+    top.forEach((o, i) => {
+      const late = daysBetween(o.due_date, day);
+      lines.push(`${NUM[i]} ${o.customer}`, `      ${m(o.outstanding_amount)} · ${lateIcon(late)} ${late} day${late === 1 ? '' : 's'} late`);
+    });
+    if (overdue.length > top.length) lines.push(`   _+${overdue.length - top.length} more overdue_`);
+    lines.push('', `👉 Reply *remind ${top[0]!.customer}* to send a reminder`);
+  } else {
+    lines.push('🎉 Nothing overdue');
+  }
+
+  if (deadlines.length) {
+    lines.push('', RULE, '📅 *TAX DEADLINES*');
+    for (const d of deadlines.slice(0, 3)) lines.push(`▫️ ${d.what}: due ${short(d.due)} (${inDays(daysBetween(day, d.due))})`);
+    if (block) lines.push(`⚠️ ${block}`);
+  }
+
+  lines.push('', RULE, '✅ *TO DO*', ...(todo.length ? todo : ['🎉 Nothing waiting for you']), RULE);
 
   const rows = [
     { label: 'Sales today', value: sales },
     { label: 'Expenses today', value: expenses },
     { label: 'Cash & bank', value: cash },
     { label: 'Waiting for your approval', value: String(pending) },
-    ...(overdue.length ? [{ label: 'To collect', value: overdue.map((o) => `${o.customer} ${m(o.outstanding_amount)}`).join(', ') }] : []),
+    ...(overdue.length ? [{ label: 'To collect', value: top.map((o) => `${o.customer} ${m(o.outstanding_amount)}`).join(', ') }] : []),
     ...deadlines.slice(0, 3).map((d) => ({ label: d.what, value: `due ${short(d.due)}` })),
     ...(bankToCheck ? [{ label: 'Bank lines to check', value: String(bankToCheck) }] : []),
   ];
