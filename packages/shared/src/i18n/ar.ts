@@ -20,6 +20,7 @@ export const ar: Partial<Record<MessageKey, string>> = {
   'auth.sendOtp': 'أرسل الرمز عبر واتساب',
   'bot.welcome': 'مرحباً {name}! أرسل صورة الفاتورة أو رسالة صوتية أو اكتب مثل "دفعت 50 للشاي".',
   'bot.received': 'تم الاستلام 👍 جارٍ قراءة المستند…',
+  'bot.unsupportedFile': 'لا يمكنني قراءة هذا النوع من الملفات. يرجى إرسال الفاتورة كصورة (JPG أو PNG) أو ملف PDF.',
   'bot.draftSummary': '{type}\n{party}\nالتاريخ: {date}\nالإجمالي: {total}\n\nرد 1 تأكيد · 2 تعديل · 3 إلغاء',
   'bot.confirmed': 'تم الترحيل ✅ {ref}',
   'bot.cancelled': 'تم الإلغاء. لم يتم تسجيل أي شيء.',

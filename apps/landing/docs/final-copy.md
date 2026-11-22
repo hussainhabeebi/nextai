@@ -112,13 +112,13 @@ Country toggle: India ₹ / UAE AED
 
 | Plan | Supporting line | Included | Price | CTA |
 | --- | --- | --- | --- | --- |
-| Base | A tidy start for your books. | Bills & expenses recorded; customer invoices; simple reports | AED 99/month · 1 user; India price pending | Start free |
-| Growth — Most popular | More help for a busier business. | Everything in Base; GST/VAT-ready books; payment reminders; bank matching; team access | AED 299/month · 4 users; India price pending | Start free |
-| Pro | An accountant in your corner. | Everything in Growth; dedicated accountant review; filing through tax partners | AED 599/month · 10 users; India price pending | Start free |
+| Base | A tidy start for your books. | Bills & expenses recorded; customer invoices; simple reports | AED 99 or ₹799 + GST /month · 1 user | Start free |
+| Growth — Most popular | More help for a busier business. | Everything in Base; GST/VAT-ready books; payment reminders; bank matching; team access | AED 299 or ₹1,999 + GST /month · 4 users | Start free |
+| Pro | An accountant in your corner. | Everything in Growth; dedicated accountant review; filing through tax partners | AED 599 or ₹4,999 + GST /month · 10 users | Start free |
 
 User limits: Base — 1 user; Growth — 4 users; Pro — 10 users.
 
-UAE plans are priced in AED per month. India pricing, tax scope and any filing fees will be confirmed before you subscribe.
+Monthly prices. India plans are in ₹ and exclude 18% GST; UAE plans are in AED. Any tax filing fees are confirmed with you before you subscribe.
 
 ## Security
 

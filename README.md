@@ -21,7 +21,8 @@ infra/
 docs/architecture.md
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the design (multi-tenancy, flows, security).
+See [docs/architecture.md](docs/architecture.md) for the design (multi-tenancy, flows, security) and
+[docs/go-live.md](docs/go-live.md) for the launch checklist (Chatwoot/WhatsApp, Resend email reports, PWA, admin).
 
 ## Local setup
 
@@ -108,7 +109,8 @@ pnpm --filter @nextai/web build && pnpm --filter @nextai/web e2e
 2. Run the steps (each is idempotent and can be retried):
    `erp_site` → `erp_api_user` → `erp_company` → `tunnel_hostname` → `chatwoot_inbox` → `erp_webhooks` → `test_connections` → `invite_owner`.
    - The provisioner (`infra/provisioner`) must run on the ERPNext host with `PROVISIONER_SECRET`.
-   - Create the WhatsApp inbox and an Agent Bot in Chatwoot, set the bot's outgoing URL to
+   - Easiest: Admin → **Integrations** → tenant → *Connect inbox* with your Chatwoot access token, account id and
+     inbox id (creates and assigns the Agent Bot). Or manually: create the WhatsApp inbox and an Agent Bot in Chatwoot, set the bot's outgoing URL to
      `https://api.nextaierp.com/webhooks/chatwoot?token=<CHATWOOT_WEBHOOK_SECRET>`, then paste account id,
      inbox id and bot token into the wizard (stored encrypted).
    - `erp_webhooks` shows a one-time secret: create ERPNext Webhooks for Sales Invoice and Payment Entry
@@ -144,6 +146,25 @@ POSTGRES_PASSWORD=... NEXTAI_APP_PASSWORD=... docker compose -f infra/docker-com
 
 Health: `GET /healthz` (liveness), `GET /readyz` (Postgres + Redis).
 
+### Coolify
+
+`infra/docker-compose.coolify.yml` is a self-contained variant for [Coolify](https://coolify.io) (no `env_file`,
+no bind mounts, no host ports; Coolify's proxy does TLS and routing).
+
+1. Coolify → **New Resource** → this GitHub repo → Build Pack **Docker Compose**.
+   Base directory `/`, Docker Compose location `/infra/docker-compose.coolify.yml`.
+2. **Environment Variables** — required: `POSTGRES_PASSWORD`, `NEXTAI_APP_PASSWORD` (letters and digits only, they
+   go into connection URLs), `ENCRYPTION_KEY`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CHATWOOT_WEBHOOK_SECRET`,
+   `ADMIN_BOOTSTRAP_PASSWORD`. Everything else from `.env.example` is optional and has the same meaning.
+3. **Domains**: `web` → `https://app.nextaierp.com:3010`, `core` → `https://api.nextaierp.com:8090`
+   (the port tells Coolify which container port to route to). In Cloudflare DNS, point `app` and `api` A records
+   at the Coolify server.
+4. Deploy. The one-shot `migrate` service creates the `nextai_app` role, applies migrations and seeds plans,
+   templates, the demo tenant and the super_admin (idempotent; set `SEED_ON_DEPLOY=false` to skip). It shows as
+   "exited" afterwards — that is expected.
+
+Without R2 credentials, uploads go to the shared `uploads` volume (`/data/storage` in core and worker).
+
 ## Known gaps / TODOs
 
 - Speech-to-text adapter: interface + mock only (`AI_STT_PROVIDER=mock`); add a provider supporting en/ml/ar.
@@ -153,7 +174,15 @@ Health: `GET /healthz` (liveness), `GET /readyz` (Postgres + Redis).
 - WebAuthn sign-in and web-push sending are not implemented yet (push subscriptions are stored).
 - Multi-page captures from the app are processed as separate documents.
 - Razorpay provider is a stub. Legal pages on the landing site are placeholders.
-- The landing signup form posts to `PUBLIC_SIGNUP_ENDPOINT` (default `https://api.nextaierp.com/v1/signup`); that
-  self-signup endpoint is not implemented in core yet — tenants are created via the admin provisioning wizard.
-- Plans follow the published UAE pricing (Base AED 99 / 1 user, Growth AED 299 / 4 users, Pro AED 599 / 10 users);
-  INR prices are placeholders until India pricing is confirmed.
+- Self-signup: the landing form posts to `/v1/signup` (email code → trial business → **its own ERPNext site**
+  `<slug>.nextaierp.com`, built automatically through the provisioner; or a company in the shared site via
+  `ERPNEXT_SHARED_*` when no provisioner is set — `SIGNUP_ERP_MODE`). The client's WhatsApp number is still
+  connected by an admin. See docs/go-live.md §1c.
+- Payment links (Razorpay, India): each business connects its own account in Settings; links go out with
+  invoices and reminders and paid links post a Payment Entry against the invoice. See docs/go-live.md §2b.
+- Daily briefing and tax deadlines (GST/TDS/ITR in India, VAT/Corporate Tax in the UAE): Settings → Tax deadlines.
+- Bank matching: statements (CSV, or PDF read by AI) and forwarded bank SMS; "bank" on WhatsApp for the rest.
+- Accountant portal: More → All my businesses, for anyone on more than one business.
+- Plans follow the published pricing, per month: Base AED 99 / ₹799 (1 user), Growth AED 299 / ₹1,999 (4 users),
+  Pro AED 599 / ₹4,999 (10 users). INR prices exclude 18% GST. Payment-provider price IDs per currency are set in
+  Admin → Plans.

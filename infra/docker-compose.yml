@@ -30,11 +30,13 @@ services:
     ports: ["127.0.0.1:6379:6379"]
     healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, retries: 5 }
 
+  # Runtime image has no prisma CLI/tsx, so migrations + seed run from the Dockerfile.core `tools` stage.
   migrate:
-    image: ghcr.io/hussainhabeebi/nextai-core:${TAG:-latest}
+    build: { context: .., dockerfile: infra/Dockerfile.core, target: tools }
     <<: *app-env
     restart: "no"
-    command: ["sh", "-c", "DATABASE_URL=$$DATABASE_MIGRATE_URL npx prisma migrate deploy"]
+    environment:
+      NEXTAI_APP_PASSWORD: ${NEXTAI_APP_PASSWORD:?set NEXTAI_APP_PASSWORD}
     depends_on: { postgres: { condition: service_healthy } }
 
   core:
@@ -42,6 +44,7 @@ services:
     build: { context: .., dockerfile: infra/Dockerfile.core }
     <<: *app-env
     ports: ["127.0.0.1:8090:8090"]
+    volumes: [uploads:/data/storage]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -51,6 +54,7 @@ services:
     image: ghcr.io/hussainhabeebi/nextai-worker:${TAG:-latest}
     build: { context: .., dockerfile: infra/Dockerfile.worker }
     <<: *app-env
+    volumes: [uploads:/data/storage]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -66,3 +70,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  uploads:

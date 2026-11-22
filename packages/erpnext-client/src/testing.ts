@@ -31,6 +31,8 @@ export class FakeErpClient implements ErpClient {
 
   async list<T = ErpDoc>(doctype: string, opts: ListOptions = {}): Promise<T[]> {
     this.check('list', [doctype, opts]);
+    const fn = (opts.fields ?? []).find((f) => /\(/.test(f));
+    if (fn) throw new Error(`SQL functions are not allowed as strings in SELECT: ${fn}`); // as current Frappe
     let rows = [...this.table(doctype).values()];
     if (opts.filters && !Array.isArray(opts.filters)) {
       const f = opts.filters;
@@ -39,6 +41,11 @@ export class FakeErpClient implements ErpClient {
       for (const [k, op, v] of opts.filters) {
         if (op === '=') rows = rows.filter((r) => r[k] === v);
         if (op === '>') rows = rows.filter((r) => Number(r[k]) > Number(v));
+        if (op === '<=') rows = rows.filter((r) => String(r[k]) <= String(v));
+        if (op === '<') rows = rows.filter((r) => String(r[k]) < String(v));
+        if (op === '!=') rows = rows.filter((r) => r[k] !== v);
+        if (op === '>=') rows = rows.filter((r) => String(r[k]) >= String(v));
+        if (op === 'between' && Array.isArray(v)) rows = rows.filter((r) => String(r[k]) >= String(v[0]) && String(r[k]) <= String(v[1]));
         if (op === 'in' && Array.isArray(v)) rows = rows.filter((r) => v.includes(r[k]));
         if (op === 'like' && typeof v === 'string') {
           const needle = v.replace(/%/g, '').toLowerCase();
@@ -63,7 +70,7 @@ export class FakeErpClient implements ErpClient {
       .map((w) => w[0])
       .join('')
       .toUpperCase();
-    const name = (doc.name as string) ?? (doc.customer_name as string) ?? (doc.supplier_name as string) ?? `${prefix}-${++this.seq}`;
+    const name = (doc.name as string) ?? (doc.customer_name as string) ?? (doc.supplier_name as string) ?? (doc.company_name as string) ?? `${prefix}-${++this.seq}`;
     const created: ErpDoc = { ...doc, name, doctype, docstatus: 0 };
     this.table(doctype).set(name, created);
     return created as T;

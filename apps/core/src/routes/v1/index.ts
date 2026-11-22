@@ -1,14 +1,19 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { Container } from '../../container.js';
 import { appAuthRoutes } from './auth.js';
+import { signupRoutes } from './signup.js';
 import { meRoutes } from './me.js';
 import { appRoutes } from './app.js';
 import { billingRoutes } from './billing.js';
+import { onlinePaymentRoutes } from './online-payments.js';
+import { bankRoutes } from './bank.js';
+import { portalRoutes } from './portal.js';
 
 export const v1Routes =
   (c: Container): FastifyPluginAsyncZod =>
   async (app) => {
     await app.register(appAuthRoutes(c), { prefix: '/auth' });
+    await app.register(signupRoutes(c), { prefix: '/signup' }); // public
     // Everything below requires an app JWT; tenant is resolved from the token claim.
     await app.register(async (authed) => {
       authed.addHook('onRequest', authed.requireApp);
@@ -16,5 +21,8 @@ export const v1Routes =
       await authed.register(meRoutes(c));
       await authed.register(appRoutes(c));
       await authed.register(billingRoutes(c));
+      await authed.register(onlinePaymentRoutes(c));
+      await authed.register(bankRoutes(c));
+      await authed.register(portalRoutes(c));
     });
   };

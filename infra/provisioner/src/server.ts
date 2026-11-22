@@ -51,6 +51,26 @@ export function parseApiKeys(out: string): Record<string, string> | undefined {
   return j.api_key && j.api_secret ? { apiKey: j.api_key, apiSecret: j.api_secret } : undefined;
 }
 
+/** `bench list-apps` output → installed app names (handles "erpnext 15.x.x main" style lines). */
+export function parseApps(out: string): string[] {
+  return out
+    .split('\n')
+    .map((l) => l.trim().split(/\s+/)[0] ?? '')
+    .filter((a) => /^[a-z_]+$/.test(a));
+}
+
+/** Last JSON object printed by a nextai_provisioning function, as string values. */
+export function parseJson(out: string): Record<string, string> | undefined {
+  const all = out.match(/\{[^{}]*\}/g);
+  if (!all) return undefined;
+  try {
+    const j = JSON.parse(all[all.length - 1]!) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(j).map(([k, v]) => [k, String(v)]));
+  } catch {
+    return undefined;
+  }
+}
+
 export const server = createServer(async (req, res) => {
   const send = (code: number, body: unknown) => {
     res.writeHead(code, { 'content-type': 'application/json' });
@@ -83,7 +103,12 @@ export const server = createServer(async (req, res) => {
     const { code, out } = await run(cmd.argv);
     const safeOut = out.slice(-4000);
     console.warn(JSON.stringify({ at: new Date().toISOString(), argv: redactArgv(cmd.argv, cmd.secretArgs), code }));
-    const data = cmd.parse === 'api-keys' ? parseApiKeys(out) : undefined;
+    if (cmd.parse === 'apps') {
+      // A missing site is an answer, not an error.
+      const apps = code === 0 ? parseApps(out) : [];
+      return send(200, { ok: true, output: code === 0 ? 'site exists' : 'no such site', data: { exists: code === 0 ? '1' : '0', apps: apps.join(',') } });
+    }
+    const data = cmd.parse === 'api-keys' ? parseApiKeys(out) : cmd.parse === 'json' ? parseJson(out) : undefined;
     return send(code === 0 ? 200 : 500, { ok: code === 0, output: cmd.parse === 'api-keys' ? 'api user created' : safeOut, data });
   } finally {
     busy = false;

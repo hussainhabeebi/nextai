@@ -13,6 +13,12 @@ rejected if older than 5 minutes or replayed. One operation runs at a time.
 | `set-config` | `bench --site <site> set-config host_name\|maintenance_mode\|pause_scheduler <value>` |
 | `create-api-user` | `bench --site <site> execute nextai_provisioning.create_api_user` (ships in `frappe_app/`) |
 | `backup` | `bench --site <site> backup --with-files` |
+| `site-status` | `bench --site <site> list-apps` → `{ exists, apps }` (a missing site is a normal answer) |
+| `complete-setup` | `bench --site <site> execute nextai_provisioning.complete_setup` — ERPNext setup wizard: company, chart of accounts, fiscal year, tax templates (validated name/abbr/country/currency/timezone/dates) |
+
+Website signups use these to give every new client its own site automatically (core `tenant.setup` job,
+see `apps/core/src/modules/provisioning/own-site.ts`). While one command runs, others get `429` and core
+reschedules instead of failing.
 
 Run (binds to 127.0.0.1 by default; set `PROVISIONER_HOST` to the private-network IP if core runs elsewhere):
 

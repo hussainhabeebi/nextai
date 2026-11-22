@@ -1,6 +1,7 @@
 import { FakeChatwootClient } from '@nextai/chatwoot-client/testing';
 import { FakeErpClient } from '@nextai/erpnext-client/testing';
 import { FakePaymentProvider } from '@nextai/payments/testing';
+import { FakeRazorpayClient } from '../src/modules/razorpay/client.js';
 import { tenantSettingsSchema } from '@nextai/shared';
 import type { PrismaClient, Tenant } from '@prisma/client';
 import { Redis } from 'ioredis';
@@ -10,6 +11,7 @@ import { createPrisma, withSystemTx } from '../src/lib/db.js';
 import { MemoryJobQueue } from '../src/lib/queue.js';
 import { FakeProvisionerClient } from '../src/modules/provisioning/provisioner-client.js';
 import { sealCwBotToken, sealErpKey, sealErpSecret } from '../src/modules/tenants/secrets.js';
+import { MemoryMailer } from '../src/modules/email/mailer.js';
 import { MemoryConversationStore } from '../src/state/conversation.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 
@@ -19,8 +21,10 @@ export interface TestContainer extends Container {
   conversations: MemoryConversationStore;
   payments: FakePaymentProvider;
   provisioner: FakeProvisionerClient;
+  mailer: MemoryMailer;
   erps: Map<string, FakeErpClient>;
   cws: Map<string, FakeChatwootClient>;
+  rzps: Map<string, FakeRazorpayClient>;
   close(): Promise<void>;
 }
 
@@ -30,6 +34,7 @@ export function testContainer(): TestContainer {
   shared ??= { prisma: createPrisma(), redis: new Redis(process.env.REDIS_URL!, { maxRetriesPerRequest: null }) };
   const erps = new Map<string, FakeErpClient>();
   const cws = new Map<string, FakeChatwootClient>();
+  const rzps = new Map<string, FakeRazorpayClient>();
   return {
     ...shared,
     queue: new MemoryJobQueue(),
@@ -42,9 +47,12 @@ export function testContainer(): TestContainer {
       return cws.get(k) ?? cws.set(k, new FakeChatwootClient()).get(k)!;
     },
     payments: new FakePaymentProvider(),
+    razorpay: (t: Tenant) => (t.rzpKeyId ? (rzps.get(t.id) ?? rzps.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined),
     provisioner: new FakeProvisionerClient(),
+    mailer: new MemoryMailer(),
     erps,
     cws,
+    rzps,
     close: async () => {},
   };
 }

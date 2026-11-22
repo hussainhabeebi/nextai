@@ -7,7 +7,7 @@ import { Input, Select } from '@/components/ui/input';
 import { adminApi } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
-type T = { id: string; key: string; name: string; language: string; params: string[]; category: string };
+type T = { id: string; key: string; name: string; language: string; params: string[]; category: string; approved: boolean };
 
 export default function Templates() {
   const { data, reload } = useApi<{ items: T[] }>('/admin/v1/templates', adminApi);
@@ -16,10 +16,14 @@ export default function Templates() {
     await adminApi.request('/admin/v1/templates', { method: 'PUT', json: { ...f, params: f.params.split(',').map((s) => s.trim()).filter(Boolean) } });
     await reload();
   };
+  const setApproved = async (x: T, approved: boolean) => {
+    await adminApi.request('/admin/v1/templates', { method: 'PUT', json: { key: x.key, name: x.name, language: x.language, params: x.params, category: x.category, approved } });
+    await reload();
+  };
   return (
     <div>
       <H1>WhatsApp templates</H1>
-      <p className="mb-4 text-sm text-muted">Map NextAi message keys to approved WhatsApp template names and their ordered parameters.</p>
+      <p className="mb-4 text-sm text-muted">Map NextAi message keys to WhatsApp template names and their ordered parameters. Mark a template approved only after Meta approves it: until then NextAi uses another approved template (e.g. invoices without the payment link).</p>
       <form className="mb-4 grid gap-2 sm:grid-cols-6" onSubmit={(e) => (e.preventDefault(), void save())}>
         <Input placeholder="key (e.g. reminder)" value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} required />
         <Input placeholder="template name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
@@ -35,6 +39,15 @@ export default function Templates() {
           { h: 'Template', c: (x) => <code>{x.name}</code> },
           { h: 'Params', c: (x) => x.params.join(', ') },
           { h: 'Category', c: (x) => x.category },
+          {
+            h: 'Approved in Meta',
+            c: (x) => (
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={x.approved} onChange={(e) => void setApproved(x, e.target.checked)} aria-label={`${x.key} ${x.language} approved`} />
+                {x.approved ? 'Yes' : 'Not yet'}
+              </label>
+            ),
+          },
           { h: '', c: (x) => <Button variant="ghost" onClick={() => setF({ key: x.key, name: x.name, language: x.language, params: x.params.join(', '), category: x.category })}>Edit</Button> },
         ]}
       />

@@ -9,6 +9,9 @@ const csv = z
   .optional()
   .transform((v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : []));
 
+/** Optional email where an empty string (e.g. `MAIL_REPLY_TO=` from .env.example) means "not set". */
+const optionalEmail = z.preprocess((v) => (v === '' ? undefined : v), z.string().email().optional());
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(8090),
@@ -39,12 +42,36 @@ export const envSchema = z.object({
   AI_STT_API_KEY: z.string().optional(),
   AI_LLM_PROVIDER: z.string().default('mock'),
   AI_LLM_API_KEY: z.string().optional(),
+  /** Resend (https://resend.com) for email reports. Without a key, email reports are skipped. */
+  RESEND_API_KEY: z.string().optional(),
+  /** Verified Resend sender, e.g. "NextAi Reports <reports@nextaierp.com>". */
+  MAIL_FROM: z.string().default('NextAi <reports@nextaierp.com>'),
+  MAIL_REPLY_TO: optionalEmail,
+  /** Recipients of the morning platform report (report.admin_daily). */
+  ADMIN_REPORT_EMAILS: csv,
+  /** Public website (signup form). Allowed by CORS on /v1/signup only. */
+  LANDING_URL: z.string().url().default('https://nextaierp.com'),
+  SIGNUP_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false'),
+  /**
+   * Where a website signup's books live:
+   *  - site:   a dedicated ERPNext site per client, built automatically through the provisioner
+   *  - shared: one company per client in the shared ERPNext site (ERPNEXT_SHARED_*)
+   *  - auto (default): site when PROVISIONER_URL + PROVISIONER_SECRET are set, else shared if configured
+   */
+  SIGNUP_ERP_MODE: z.enum(['auto', 'site', 'shared']).default('auto'),
+  /** Shared ERPNext site: self-signup creates one company per client here. Empty = admin connects ERPNext. */
+  ERPNEXT_SHARED_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  ERPNEXT_SHARED_API_KEY: z.string().optional(),
+  ERPNEXT_SHARED_API_SECRET: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_PUBLISHABLE_KEY: z.string().optional(),
   PROVISIONER_URL: z.string().optional(),
   PROVISIONER_SECRET: z.string().optional(),
-  ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
+  ADMIN_BOOTSTRAP_EMAIL: optionalEmail,
   ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
   /** Use in-memory fakes for ERPNext/Chatwoot (local dev without external systems). */

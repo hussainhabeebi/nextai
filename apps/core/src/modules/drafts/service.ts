@@ -5,8 +5,10 @@ import type { Container } from '../../container.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
+import { parseDate } from '../../ai/rules.js';
 import { audit } from '../audit/audit.js';
-import { DOCTYPE_FOR, erpContext, partyDoc, toErpDoc } from '../erpnext/mappers.js';
+import { DOCTYPE_FOR, applyTaxTemplate, erpContext, partyDoc, partyPlacement, resolveAccounts, toErpDoc } from '../erpnext/mappers.js';
+import { createLedger, type LedgerKind } from '../erpnext/create-account.js';
 
 export interface Actor {
   id?: string | null;
@@ -32,19 +34,37 @@ const TYPE_LABEL: Record<DraftType, string> = {
 export function summaryText(draft: Pick<Draft, 'type' | 'payload'>, lang: Language): string {
   const p = draft.payload as DraftPayload;
   const party = p.partyName ? `${draft.type === 'sales_invoice' || draft.type === 'payment_in' ? 'Customer' : 'Supplier'}: ${p.partyName}` : (p.remarks ?? '');
+  const received = draft.type === 'journal_entry' && p.direction === 'in';
+  const contra = draft.type === 'journal_entry' && p.voucherType === 'Contra Entry';
+  if (contra) {
+    const short = (a?: string) => (a ?? '').replace(/\s+-\s+[^-]+$/, '');
+    return t(lang, 'bot.draftSummary', {
+      type: '🔁 Cash ↔ bank transfer',
+      party: [p.remarks, `From: ${p.paidFromAccount ? short(p.paidFromAccount) : p.paymentMode}`, `To: ${short(p.expenseAccount)}`].filter(Boolean).join('\n'),
+      date: p.date,
+      total: formatMoney(p.total, p.currency as Currency),
+    });
+  }
   const extra = [
     p.billNo ? `Bill no: ${p.billNo}` : undefined,
+    p.invoiceRef ? `For invoice: ${p.invoiceRef}` : undefined,
+    p.referenceNo && (draft.type === 'payment_in' || draft.type === 'payment_out') ? `Bank ref: ${p.referenceNo}` : undefined,
     p.lines.length > 1 ? `${p.lines.length} items` : p.lines[0]?.description,
     p.taxes && Object.values(p.taxes).some((v) => (v ?? 0) > 0)
       ? `Tax: ${Object.entries(p.taxes).filter(([, v]) => (v ?? 0) > 0).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(', ')}`
       : undefined,
+    (draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && p.expenseAccount ? `Account: ${p.expenseAccount.replace(/\s+-\s+[^-]+$/, '')}` : undefined,
+    draft.type === 'journal_entry' && p.newAccount && !p.expenseAccount ? `Account: ${p.newAccount.name} (new ${p.newAccount.kind} account, created when you confirm)` : undefined,
+    p.paymentMode && !['unknown', 'credit'].includes(p.paymentMode) ? `${received ? 'Received in' : 'Paid by'}: ${p.paymentMode}` : undefined,
     p.validationIssues.length ? `⚠️ ${p.validationIssues.join('; ')}` : undefined,
   ]
     .filter(Boolean)
     .join('\n');
   return (
     t(lang, 'bot.draftSummary', {
-      type: TYPE_LABEL[draft.type],
+      type: p.isReturn
+        ? draft.type === 'sales_invoice' ? '↩️ Sales return (credit note)' : '↩️ Purchase return (debit note)'
+        : received ? '💰 Money received' : draft.type === 'journal_entry' && p.direction === 'out' ? '💸 Money paid' : TYPE_LABEL[draft.type],
       party: [party, extra].filter(Boolean).join('\n'),
       date: p.date,
       total: formatMoney(p.total, p.currency as Currency),
@@ -157,7 +177,10 @@ export function parseEdit(text: string): Partial<DraftPayload> | undefined {
     case 'vendor':
       return { partyName: val };
     case 'date':
-      return /^\d{4}-\d{2}-\d{2}$/.test(val) ? { date: val } : undefined;
+    {
+      const date = parseDate(val); // "2026-11-18", "18/11/2026", "nov 18", "yesterday"
+      return date ? { date } : undefined;
+    }
     case 'billno':
     case 'invoiceno':
       return { billNo: val };
@@ -177,7 +200,8 @@ async function ensureParty(c: Container, tenant: Tenant, kind: 'Customer' | 'Sup
   const found = await erp.list(kind, { filters: [['name', '=', p.partyName]], limit: 1 });
   if (found.length === 0) {
     // Draft was confirmed by the user → creating the party is authorised.
-    await erp.create(kind, partyDoc(kind, p.partyName, { taxId: p.partyTaxId, phone: p.partyPhone, country: tenant.country }));
+    const placement = await partyPlacement(erp, kind, tenant.id, tenant.country);
+    await erp.create(kind, partyDoc(kind, p.partyName, { taxId: p.partyTaxId, phone: p.partyPhone, country: tenant.country, ...placement }));
   }
 }
 
@@ -185,6 +209,12 @@ async function ensureParty(c: Container, tenant: Tenant, kind: 'Customer' | 'Sup
 export async function postDraft(c: Container, tenantId: string, draftId: string): Promise<Draft> {
   const tenant = await withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: tenantId } }));
   const db = tenantDb(c.prisma, tenantId);
+  const setupStatus = (tenant.settings as { erpSetup?: { status?: string } } | null)?.erpSetup?.status;
+  if (!tenant.erpApiKeyEnc && (setupStatus === 'queued' || setupStatus === 'running')) {
+    // New signup whose ERPNext site is still being built: keep the entry confirmed and post it once ready.
+    await c.queue.enqueue(QUEUES.draftPost, { tenantId, draftId }, { jobId: `post-${draftId}-wait-${Date.now()}`, delayMs: 90_000 });
+    return getDraft(c, tenantId, draftId);
+  }
   const claimed = await db.draft.updateMany({ where: { id: draftId, status: { in: ['confirmed', 'failed'] } }, data: { status: 'posting' } });
   const draft = await getDraft(c, tenantId, draftId);
   if (claimed.count === 0) {
@@ -199,30 +229,46 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
   try {
     if (draft.type === 'purchase_invoice' || draft.type === 'payment_out') await ensureParty(c, tenant, 'Supplier', p);
     if (draft.type === 'sales_invoice' || draft.type === 'payment_in') await ensureParty(c, tenant, 'Customer', p);
+    if (draft.type === 'journal_entry' && p.newAccount && !p.expenseAccount) {
+      // Confirmed by the user → creating the ledger shown in the summary ("New capital account: Hussain") is authorised.
+      const made = await createLedger(c, tenant, { kind: p.newAccount.kind as LedgerKind, name: p.newAccount.name });
+      p.expenseAccount = made.name;
+      await db.draft.update({ where: { id: draftId }, data: { payload: p } });
+    }
 
     let erpName = draft.erpName;
     if (!erpName) {
-      const created = await erp.create(doctype, toErpDoc(draft.type, p, ctx));
+      const body = toErpDoc(draft.type, p, ctx);
+      const swapped = await resolveAccounts(erp, ctx, body, tenantId);
+      await applyTaxTemplate(erp, body);
+      if (p.expenseAccount && swapped[p.expenseAccount]) p.expenseAccount = swapped[p.expenseAccount]; // learn the real ledger
+      const created = await erp.create(doctype, body);
       erpName = created.name as string;
       await db.draft.update({ where: { id: draftId }, data: { erpDoctype: doctype, erpName } });
     }
     const current = await erp.get(doctype, erpName);
     if (current.docstatus !== 1) await erp.submit(doctype, erpName);
+    await db.bankLine.updateMany({ where: { draftId }, data: { status: 'matched', matchType: doctype, matchName: erpName } });
 
     if (draft.documentId) {
       const doc = await db.document.findUnique({ where: { id: draft.documentId } });
       if (doc) {
-        const obj = await c.storage.get(tenantId, doc.r2Key);
-        await erp.uploadFile({ filename: doc.r2Key.split('/').pop()!, content: obj.body, mime: doc.mime }, { doctype, name: erpName }, true);
+        // The entry is already submitted: a failed attachment must not mark it failed or re-post it.
+        try {
+          const obj = await c.storage.get(tenantId, doc.r2Key);
+          await erp.uploadFile({ filename: doc.r2Key.split('/').pop()!, content: obj.body, mime: doc.mime }, { doctype, name: erpName }, true);
+        } catch (err) {
+          logger.warn({ tenantId, draftId, erpName, err: (err as Error).message }, 'bill attachment upload failed');
+        }
       }
     }
     const posted = await db.draft.update({ where: { id: draftId }, data: { status: 'posted', error: null } });
     await audit(c.prisma, { tenantId, actorType: 'system', channel: 'system', action: 'draft.posted', entity: 'draft', entityId: draftId, after: { erpDoctype: doctype, erpName, total: p.total } });
 
-    if ((draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && p.partyName && p.expenseAccount) {
+    if ((draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && !p.isReturn && p.partyName && p.expenseAccount) {
       await learnVendor(c, tenantId, p.partyName, p.partyTaxId, p.expenseAccount, p.taxTemplate);
     }
-    if (draft.type === 'sales_invoice' && ctx.settings.autoSendInvoices) {
+    if (draft.type === 'sales_invoice' && !p.isReturn && ctx.settings.autoSendInvoices) {
       await c.queue.enqueue(QUEUES.outboundInvoice, { tenantId, invoiceName: erpName, draftId, source: 'nextai' }, { jobId: `inv-${tenantId}-${erpName}` });
     }
     if (draft.conversationId) {

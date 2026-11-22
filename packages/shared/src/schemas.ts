@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  APP_STYLES,
+  APP_VIEWS,
   COUNTRIES,
   CURRENCIES,
   DRAFT_STATUSES,
@@ -57,10 +59,26 @@ export type OfficeSettings = z.infer<typeof officeSettingsSchema>;
 
 export const tenantSettingsSchema = z.object({
   taxRegime: z.enum(['gst_regular', 'gst_composition', 'vat', 'vat_ct', 'none']).default('gst_regular'),
+  /** Which filings apply, for deadline warnings. */
+  taxCalendar: z
+    .object({
+      gstFiling: z.enum(['monthly', 'quarterly']).default('monthly'), // quarterly = QRMP
+      tds: z.boolean().default(false),
+      advanceTax: z.boolean().default(true),
+      taxAudit: z.boolean().default(false),
+      vatPeriod: z.enum(['quarterly', 'monthly']).default('quarterly'),
+      /** Months in which UAE VAT quarters end (FTA stagger), e.g. [3, 6, 9, 12]. */
+      vatQuarterEnds: z.array(z.number().int().min(1).max(12)).length(4).default([3, 6, 9, 12]),
+      /** Warn this many days before each deadline. */
+      warnDays: z.array(z.number().int().min(0).max(30)).default([7, 2, 0]),
+    })
+    .default({}),
   autoPost: z.boolean().default(false),
   timezone: z.string().default('Asia/Kolkata'),
   reminders: reminderScheduleSchema.default({}),
   dailySummary: z.object({ enabled: z.boolean().default(true), hourLocal: z.number().int().min(0).max(23).default(20) }).default({}),
+  /** Daily summary by email (Resend). Owners with an email address always receive it; `recipients` adds accountants etc. */
+  emailReports: z.object({ enabled: z.boolean().default(true), recipients: z.array(z.string().email()).max(10).default([]) }).default({}),
   companyName: z.string().optional(),
   taxId: z.string().optional(),
   invoiceTemplate: z.string().optional(),
@@ -77,9 +95,17 @@ export const tenantSettingsSchema = z.object({
   accounts: z.record(z.string()).default({}),
   taxTemplates: z.record(z.string()).default({}),
   autoSendInvoices: z.boolean().default(true),
+  /** Online payment links (Razorpay, India) on invoices and reminders. Account/mode are set up in ERPNext on connect. */
+  paymentLinks: z
+    .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
+    .default({}),
   featureFlags: z.record(z.boolean()).default({}),
   lifecycle: lifecycleSettingsSchema.default({}),
   office: officeSettingsSchema.default({}),
+  /** Industry layout of the customer app: entry menus, labels and screens. */
+  appView: z.enum(APP_VIEWS).default('general'),
+  /** Colour theme of the customer app. */
+  appStyle: z.enum(APP_STYLES).default('teal'),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 
@@ -155,6 +181,16 @@ export const draftPayloadSchema = z.object({
   remarks: z.string().optional(),
   documentId: z.string().uuid().optional(),
   createParty: z.boolean().optional(),
+  /** Payment: the invoice (sales for payment_in, purchase for payment_out) this payment settles. */
+  invoiceRef: z.string().optional(),
+  /** Journal entry: "out" = money paid from cash/bank (default), "in" = money received into cash/bank. */
+  direction: z.enum(['in', 'out']).optional(),
+  /** Journal entry: the ledger to create on confirm when it doesn't exist yet (e.g. a new capital account). */
+  newAccount: z.object({ kind: z.string(), name: z.string() }).optional(),
+  /** Sales/purchase invoice: a return (ERPNext credit note / debit note), posted with is_return and negative quantities. */
+  isReturn: z.boolean().optional(),
+  /** Journal entry: the ERPNext voucher type when not the cash/bank default, e.g. "Contra Entry" for cash ↔ bank. */
+  voucherType: z.string().optional(),
   validationIssues: z.array(z.string()).default([]),
 });
 export type DraftPayload = z.infer<typeof draftPayloadSchema>;
@@ -176,6 +212,18 @@ export const intentResultSchema = z.object({
       paymentMode: z.string().optional(),
       report: z.string().optional(),
       question: z.string().optional(),
+      /** add_party / add_account: customer, supplier, expense, income, bank or cash. */
+      kind: z.string().optional(),
+      /** add_account: the ledger name, e.g. "Fuel". (add_party uses `party`.) */
+      accountName: z.string().optional(),
+      /** add_account: the group to put the ledger under, when named ("... under Capital Account"). */
+      group: z.string().optional(),
+      /** add_employee: Female, Male or Other. (The employee's name is in `party`.) */
+      gender: z.string().optional(),
+      /** add_employee: date of birth, YYYY-MM-DD. */
+      birthDate: isoDate.optional(),
+      /** add_employee: date of joining, YYYY-MM-DD. */
+      joiningDate: isoDate.optional(),
     })
     .default({}),
 });

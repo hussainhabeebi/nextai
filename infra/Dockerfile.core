@@ -10,12 +10,23 @@ COPY apps/core ./apps/core
 RUN pnpm install --frozen-lockfile --filter @nextai/core... \
  && pnpm --filter "@nextai/core^..." build && pnpm --filter @nextai/core build \
  && pnpm deploy --filter @nextai/core --prod --legacy /out \
- && cp -r apps/core/prisma /out/prisma && cd /out && npx prisma generate
+ && cp -r apps/core/prisma /out/prisma && cd /out && /repo/apps/core/node_modules/.bin/prisma generate --schema prisma/schema.prisma
+
+# One-shot migrate/seed image: keeps the dev toolchain (prisma CLI, tsx) that the runtime image drops.
+FROM build AS tools
+WORKDIR /repo/apps/core
+RUN ./node_modules/.bin/prisma generate
+COPY infra/migrate.sh /usr/local/bin/nextai-migrate
+RUN chmod +x /usr/local/bin/nextai-migrate
+CMD ["nextai-migrate"]
 
 FROM base AS runtime
 ENV NODE_ENV=production PORT=8090
 WORKDIR /app
 COPY --from=build /out ./
+# Shared upload dir when R2 is not configured (mount a volume here in core + worker).
+RUN mkdir -p /data/storage && chown node:node /data/storage
+ENV LOCAL_STORAGE_DIR=/data/storage
 USER node
 EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

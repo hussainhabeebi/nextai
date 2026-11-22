@@ -94,6 +94,7 @@ enum WebhookSource {
   erpnext
   stripe
   leadvyne
+  razorpay
 }
 
 /// Who owns a lifecycle step. Rules name roles, not people, so reassigning work is a data change.
@@ -157,6 +158,10 @@ model Tenant {
   /// Separate WhatsApp number (Chatwoot inbox) for the team: the virtual office assistant and all staff notifications.
   cwStaffInboxId       Int?         @unique @map("cw_staff_inbox_id")
   cwBotTokenEnc        String?      @map("cw_bot_token_enc")
+  /// The business's own Razorpay account (payment links on its invoices). Key id is public; secrets sealed.
+  rzpKeyId             String?      @map("rzp_key_id")
+  rzpKeySecretEnc      String?      @map("rzp_key_secret_enc")
+  rzpWebhookSecretEnc  String?      @map("rzp_webhook_secret_enc")
   /// HMAC secret for the lead-capture webhook (Leadvyne). AES-GCM, AAD = lead_webhook:{tenant id}
   leadWebhookSecretEnc String?      @map("lead_webhook_secret_enc")
   planId               String?      @map("plan_id") @db.Uuid
@@ -184,6 +189,8 @@ model Tenant {
   announcements   Announcement[]
   approvals       Approval[]
   meetings        Meeting[]
+  paymentLinks    PaymentLink[]
+  bankLines       BankLine[]
 
   @@map("tenants")
 }
@@ -449,6 +456,10 @@ model MessageTemplate {
   language  String   @db.VarChar(5)
   params    String[] // ordered param names
   category  String   @default("UTILITY")
+  /**
+   * Approved in Meta. Unapproved templates are never sent; the message falls back to an approved one.
+   */
+  approved  Boolean  @default(true)
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([key, language])
@@ -689,4 +700,57 @@ model Meeting {
   @@unique([tenantId, code])
   @@index([tenantId, startsAt])
   @@map("meetings")
+}
+
+/**
+ * A Razorpay payment link for a sales invoice (one active link per invoice and amount).
+ */
+model PaymentLink {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  invoiceName     String    @map("invoice_name")
+  customer        String
+  amount          Decimal   @db.Decimal(14, 2)
+  currency        String    @db.VarChar(3)
+  provider        String    @default("razorpay")
+  providerId      String    @unique @map("provider_id")
+  url             String
+  status          String    @default("created") // created | paid | cancelled
+  paymentId       String?   @map("payment_id")
+  erpPaymentEntry String?   @map("erp_payment_entry")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  paidAt          DateTime? @map("paid_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, invoiceName])
+  @@map("payment_links")
+}
+
+/**
+ * One line of a bank statement or a forwarded bank SMS, and what it was matched to.
+ */
+model BankLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  date        String   @db.VarChar(10) // YYYY-MM-DD
+  amount      Decimal  @db.Decimal(14, 2) // always positive
+  direction   String // in | out
+  description String
+  reference   String?
+  balance     Decimal? @db.Decimal(14, 2)
+  source      String // statement | sms
+  fingerprint String // dedupe across overlapping statements and SMS
+  status      String   @default("unmatched") // unmatched | suggested | matched | ignored
+  matchType   String?  @map("match_type") // Sales Invoice | Purchase Invoice | Payment Entry | Journal Entry
+  matchName   String?  @map("match_name")
+  draftId     String?  @map("draft_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, fingerprint])
+  @@index([tenantId, status])
+  @@map("bank_lines")
 }

@@ -36,4 +36,18 @@ describe('chatwoot-client', () => {
     expect(JSON.parse(init.body).content).toContain('1. Confirm');
     expect(JSON.stringify(c)).not.toContain('tok');
   });
+  it('finds the latest conversation of a contact in its own inbox', async () => {
+    const payload = [
+      { id: 10, inbox_id: 2, status: 'resolved', last_activity_at: 100 },
+      { id: 11, inbox_id: 2, status: 'open', last_activity_at: 300 },
+      { id: 12, inbox_id: 9, status: 'open', last_activity_at: 999 },
+    ];
+    const f = vi.fn().mockResolvedValue(new Response(JSON.stringify({ payload }), { status: 200 }));
+    const c = new HttpChatwootClient({ baseUrl: 'https://app.aiingo.com', accountId: 1, inboxId: 2, botToken: 'tok' }, { fetch: f });
+    expect(await c.findLatestConversation(7)).toEqual({ conversationId: 11, status: 'open' });
+    expect(f.mock.calls[0]![0]).toBe('https://app.aiingo.com/api/v1/accounts/1/contacts/7/conversations');
+    const none = vi.fn().mockResolvedValue(new Response(JSON.stringify({ payload: [payload[2]] }), { status: 200 }));
+    const c2 = new HttpChatwootClient({ baseUrl: 'https://app.aiingo.com', accountId: 1, inboxId: 2, botToken: 'tok' }, { fetch: none });
+    expect(await c2.findLatestConversation(7)).toBeNull();
+  });
 });

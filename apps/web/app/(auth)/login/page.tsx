@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LogoStacked } from '@/components/brand';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
@@ -17,13 +17,31 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [session, setSession] = useState<Session | null>(null);
+  const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp');
+
+  // One-time link from website signup (/login#t=…): the fragment never reaches a server log.
+  useEffect(() => {
+    const m = window.location.hash.match(/^#t=([\w-]{20,100})$/);
+    if (!m) return;
+    history.replaceState(null, '', window.location.pathname);
+    setBusy(true);
+    api
+      .post<Session>('/v1/auth/magic', { token: m[1] })
+      .then((s) => {
+        api.setSession(s);
+        router.replace('/');
+      })
+      .catch((e: ApiError) => setError(e.message))
+      .finally(() => setBusy(false));
+  }, [router]);
 
   const request = async () => {
     setBusy(true);
     setError('');
     try {
-      const r = await api.post<{ sent: boolean; devCode?: string }>('/v1/auth/otp/request', { phone });
+      const r = await api.post<{ sent: boolean; channel?: 'whatsapp' | 'email'; devCode?: string }>('/v1/auth/otp/request', { phone });
       if (r.devCode) setCode(r.devCode); // development only
+      setChannel(r.channel ?? 'whatsapp');
       setStep('code');
     } catch (e) {
       setError((e as ApiError).message);
@@ -59,7 +77,7 @@ export default function LoginPage() {
       </div>
       {step === 'phone' && (
         <form className="space-y-4" onSubmit={(e) => (e.preventDefault(), void request())}>
-          <Field label={t('auth.phone')} hint="We will send a 6-digit code to your WhatsApp.">
+          <Field label={t('auth.phone')} hint="We will send a 6-digit code to your WhatsApp (or to your email until WhatsApp is connected).">
             <Input inputMode="tel" autoComplete="tel" placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={8} />
           </Field>
           <Button size="lg" disabled={busy || phone.length < 8}>
@@ -69,7 +87,7 @@ export default function LoginPage() {
       )}
       {step === 'code' && (
         <form className="space-y-4" onSubmit={(e) => (e.preventDefault(), void verify())}>
-          <Field label={t('auth.code')}>
+          <Field label={t('auth.code')} hint={channel === 'email' ? 'We sent the code to your email.' : 'We sent the code to your WhatsApp.'}>
             <Input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required className="text-center text-2xl tracking-[0.5em]" />
           </Field>
           <Button size="lg" disabled={busy || code.length !== 6}>
