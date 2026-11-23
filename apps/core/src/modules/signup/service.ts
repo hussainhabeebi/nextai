@@ -22,7 +22,7 @@ export const signupRequestSchema = z.object({
   country: z.enum(COUNTRIES),
   language: z.enum(LANGUAGES).default('en'),
   plan: z.enum(PLAN_CODES).optional(),
-  utm: z.record(z.string().max(200)).optional(),
+  utm: z.record(z.string(), z.string().max(200)).optional(),
   /** Honeypot: humans never see or fill this field. */
   website: z.string().max(200).optional(),
 });

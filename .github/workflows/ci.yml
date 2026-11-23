@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: pnpm }
+        with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: Build packages
         run: pnpm turbo run build --filter "./packages/*" --filter @nextai/core
@@ -70,14 +70,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: pnpm }
+        with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # Build first: the seed script imports the compiled workspace packages.
+      - run: pnpm turbo run build --filter @nextai/web --filter @nextai/core
       - name: Database
         run: |
           psql postgresql://postgres:postgres@localhost:5432/postgres -c "CREATE ROLE nextai_app LOGIN PASSWORD 'nextai_app'" -c "CREATE DATABASE nextai"
           pnpm --filter @nextai/core exec sh -c 'DATABASE_URL=$DATABASE_MIGRATE_URL prisma migrate deploy'
           pnpm --filter @nextai/core seed
-      - run: pnpm turbo run build --filter @nextai/web --filter @nextai/core
       - run: pnpm --filter @nextai/web exec playwright install --with-deps chromium
       - run: pnpm --filter @nextai/web e2e
         env: { CI: "1" }
@@ -120,7 +121,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: pnpm }
+        with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile && pnpm --filter @nextai/landing build
       - name: Deploy to Cloudflare Pages
         env: { CF_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}" }

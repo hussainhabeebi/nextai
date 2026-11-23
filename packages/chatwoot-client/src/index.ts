@@ -246,7 +246,7 @@ export const chatwootWebhookSchema = z
     content: z.string().nullable().optional(),
     message_type: z.union([z.string(), z.number()]).optional(),
     content_type: z.string().nullable().optional(),
-    content_attributes: z.record(z.unknown()).nullable().optional(),
+    content_attributes: z.record(z.string(), z.unknown()).nullable().optional(),
     private: z.boolean().optional(),
     created_at: z.union([z.string(), z.number()]).optional(),
     account: z.object({ id: z.number() }).passthrough().optional(),

@@ -1,7 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { extractionSchema, intentResultSchema, type Country, type Currency, type Language } from '@nextai/shared';
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { AiUsage, LlmProvider, StatementLine, VisionProvider } from './types.js';
 
 /** Default model; override with AI_ANTHROPIC_MODEL. */
@@ -10,9 +9,9 @@ const MODEL = process.env.AI_ANTHROPIC_MODEL ?? 'claude-opus-5-5';
 const PRICE = { input: 4, output: 20 };
 
 type Json = Record<string, unknown>;
-/** Convert a Zod (v3) schema into a strict JSON schema for structured outputs: all keys required, no extras. */
-export function strictJsonSchema(schema: z.ZodTypeAny): Json {
-  const raw = zodToJsonSchema(schema, { $refStrategy: 'none', target: 'jsonSchema7' }) as Json;
+/** Convert a Zod schema into a strict JSON schema for structured outputs: all keys required, no extras. */
+export function strictJsonSchema(schema: z.ZodType): Json {
+  const raw = z.toJSONSchema(schema, { target: 'draft-7', io: 'input', unrepresentable: 'any', reused: 'inline' }) as Json;
   const walk = (node: unknown): unknown => {
     if (Array.isArray(node)) return node.map(walk);
     if (!node || typeof node !== 'object') return node;
@@ -35,7 +34,7 @@ const INTENT_JSON = strictJsonSchema(intentResultSchema);
 const CHECK_SCHEMA = z.object({ covered: z.array(z.string()) });
 const CHECK_JSON = strictJsonSchema(CHECK_SCHEMA);
 
-function parseText<T>(content: Anthropic.ContentBlock[], schema: z.ZodType<T, z.ZodTypeDef, unknown>): T {
+function parseText<T>(content: Anthropic.ContentBlock[], schema: z.ZodType<T>): T {
   const text = content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
   return schema.parse(JSON.parse(text));
 }
