@@ -119,7 +119,7 @@ export const platformRoutes =
 
     app.patch(
       '/tenants/:id/settings',
-      { ...superOnly, schema: { tags: ['admin'], params: uuidParam, body: z.object({ settings: z.record(z.unknown()), planCode: z.enum(PLAN_CODES).optional() }) } },
+      { ...superOnly, schema: { tags: ['admin'], params: uuidParam, body: z.object({ settings: z.record(z.string(), z.unknown()), planCode: z.enum(PLAN_CODES).optional() }) } },
       async (req) => {
         const before = await sys((tx) => tx.tenant.findUniqueOrThrow({ where: { id: req.params.id } }));
         const plan = req.body.planCode ? await c.prisma.plan.findUnique({ where: { code: req.body.planCode } }) : null;
@@ -166,7 +166,7 @@ export const platformRoutes =
         schema: {
           tags: ['admin'],
           params: z.object({ id: z.string().uuid(), step: z.enum(PROVISION_STEPS) }),
-          body: z.object({ chatwoot: z.object({ accountId: z.number().int(), inboxId: z.number().int(), botToken: z.string().min(8) }).optional() }).default({}),
+          body: z.object({ chatwoot: z.object({ accountId: z.number().int(), inboxId: z.number().int(), botToken: z.string().min(8) }).optional() }).prefault({}),
         },
       },
       async (req) => {
@@ -258,7 +258,7 @@ export const platformRoutes =
     app.get('/plans', { ...anyAdmin, schema: { tags: ['admin'] } }, async () => ({ items: await c.prisma.plan.findMany({ orderBy: { code: 'asc' } }) }));
     app.patch(
       '/plans/:code',
-      { ...superOnly, schema: { tags: ['admin'], params: z.object({ code: z.enum(PLAN_CODES) }), body: z.object({ name: z.string().optional(), priceMonthly: z.record(z.number()).optional(), limits: planLimitsSchema.optional(), providerPriceIds: z.record(z.record(z.string())).optional(), active: z.boolean().optional() }) } },
+      { ...superOnly, schema: { tags: ['admin'], params: z.object({ code: z.enum(PLAN_CODES) }), body: z.object({ name: z.string().optional(), priceMonthly: z.record(z.string(), z.number()).optional(), limits: planLimitsSchema.optional(), providerPriceIds: z.record(z.string(), z.record(z.string(), z.string())).optional(), active: z.boolean().optional() }) } },
       async (req) => {
         const before = await c.prisma.plan.findUniqueOrThrow({ where: { code: req.params.code } });
         const after = await c.prisma.plan.update({ where: { code: req.params.code }, data: req.body });

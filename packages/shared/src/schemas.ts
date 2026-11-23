@@ -51,7 +51,7 @@ export const officeSettingsSchema = z.object({
   /** AI summary of the team's day to management, one hour after endOfDay. */
   teamSummaryEnabled: z.boolean().default(true),
   meetingReminderMinutes: z.number().int().min(1).max(240).default(15),
-  weeklyReport: z.object({ enabled: z.boolean().default(true), weekday: z.number().int().min(0).max(6).default(1), hourLocal: z.number().int().min(0).max(23).default(9) }).default({}),
+  weeklyReport: z.object({ enabled: z.boolean().default(true), weekday: z.number().int().min(0).max(6).default(1), hourLocal: z.number().int().min(0).max(23).default(9) }).prefault({}),
   /** Create ERPNext Attendance (Present) at check-out for staff with an ERPNext Employee id. */
   attendanceErpSync: z.boolean().default(false),
 });
@@ -72,13 +72,13 @@ export const tenantSettingsSchema = z.object({
       /** Warn this many days before each deadline. */
       warnDays: z.array(z.number().int().min(0).max(30)).default([7, 2, 0]),
     })
-    .default({}),
+    .prefault({}),
   autoPost: z.boolean().default(false),
   timezone: z.string().default('Asia/Kolkata'),
-  reminders: reminderScheduleSchema.default({}),
-  dailySummary: z.object({ enabled: z.boolean().default(true), hourLocal: z.number().int().min(0).max(23).default(20) }).default({}),
+  reminders: reminderScheduleSchema.prefault({}),
+  dailySummary: z.object({ enabled: z.boolean().default(true), hourLocal: z.number().int().min(0).max(23).default(20) }).prefault({}),
   /** Daily summary by email (Resend). Owners with an email address always receive it; `recipients` adds accountants etc. */
-  emailReports: z.object({ enabled: z.boolean().default(true), recipients: z.array(z.string().email()).max(10).default([]) }).default({}),
+  emailReports: z.object({ enabled: z.boolean().default(true), recipients: z.array(z.string().email()).max(10).default([]) }).prefault({}),
   companyName: z.string().optional(),
   taxId: z.string().optional(),
   invoiceTemplate: z.string().optional(),
@@ -92,16 +92,16 @@ export const tenantSettingsSchema = z.object({
   /** ERPNext company abbreviation used in account names, e.g. "Cash - AIL" */
   companyAbbr: z.string().optional(),
   /** Override default account / tax template names */
-  accounts: z.record(z.string()).default({}),
-  taxTemplates: z.record(z.string()).default({}),
+  accounts: z.record(z.string(), z.string()).prefault({}),
+  taxTemplates: z.record(z.string(), z.string()).prefault({}),
   autoSendInvoices: z.boolean().default(true),
   /** Online payment links (Razorpay, India) on invoices and reminders. Account/mode are set up in ERPNext on connect. */
   paymentLinks: z
     .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
-    .default({}),
-  featureFlags: z.record(z.boolean()).default({}),
-  lifecycle: lifecycleSettingsSchema.default({}),
-  office: officeSettingsSchema.default({}),
+    .prefault({}),
+  featureFlags: z.record(z.string(), z.boolean()).prefault({}),
+  lifecycle: lifecycleSettingsSchema.prefault({}),
+  office: officeSettingsSchema.prefault({}),
   /** Industry layout of the customer app: entry menus, labels and screens. */
   appView: z.enum(APP_VIEWS).default('general'),
   /** Colour theme of the customer app. */
@@ -144,7 +144,7 @@ export const extractionSchema = z.object({
       igst: z.number().default(0),
       vat: z.number().default(0),
     })
-    .default({}),
+    .prefault({}),
   total: z.number().nullable(),
   paymentMode: z.enum(['cash', 'bank', 'card', 'upi', 'credit', 'unknown']).default('unknown'),
   confidence: z.number().min(0).max(1),
@@ -225,7 +225,7 @@ export const intentResultSchema = z.object({
       /** add_employee: date of joining, YYYY-MM-DD. */
       joiningDate: isoDate.optional(),
     })
-    .default({}),
+    .prefault({}),
 });
 export type IntentResult = z.infer<typeof intentResultSchema>;
 
