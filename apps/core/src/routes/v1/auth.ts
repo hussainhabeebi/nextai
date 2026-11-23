@@ -24,6 +24,24 @@ const tokenResponse = z.object({
   memberships: membershipsSchema,
 });
 
+/**
+ * The number as typed ("050 123 4567", "98765 43210", "+971…") → the stored E.164 number with memberships.
+ * Local formats are tried for India and the UAE: staff are stored in their business's format.
+ */
+async function resolveLoginPhone(c: Container, raw: string) {
+  const candidates = [...new Set([normalizePhone(raw, 'IN'), normalizePhone(raw, 'AE')])];
+  for (const phone of candidates) {
+    const members = await membershipsForPhone(c, phone);
+    if (members.length) return { phone, members };
+  }
+  return { phone: candidates[0]!, members: [] as Awaited<ReturnType<typeof membershipsForPhone>> };
+}
+
+/** First login (or first WhatsApp message) of an invited member makes them active. */
+export async function activateInvited(c: Container, phone: string) {
+  await withSystemTx(c.prisma, (tx) => tx.user.updateMany({ where: { phone, status: 'invited' }, data: { status: 'active' } }));
+}
+
 export async function membershipsForPhone(c: Container, phone: string) {
   return withSystemTx(c.prisma, (tx) =>
     tx.user.findMany({
@@ -51,17 +69,25 @@ export const appAuthRoutes =
 
     app.post(
       '/otp/request',
-      { ...strict, schema: { tags: ['auth'], body: otpRequestSchema, response: { 200: z.object({ sent: z.boolean(), channel: z.enum(['whatsapp', 'email']).optional(), devCode: z.string().optional() }) } } },
+      { ...strict, schema: { tags: ['auth'], body: otpRequestSchema, response: { 200: z.object({ sent: z.boolean(), channel: z.enum(['whatsapp', 'email', 'none']).optional(), message: z.string().optional(), devCode: z.string().optional() }) } } },
       async (req) => {
-        const phone = normalizePhone(req.body.phone);
-        const members = await membershipsForPhone(c, phone);
+        const { phone, members } = await resolveLoginPhone(c, req.body.phone);
         // Do not reveal whether the number is registered.
         if (members.length === 0) return { sent: true, channel: 'whatsapp' as const };
         const issued = await issueOtp(c.redis, phone);
         if ('throttled' in issued) return { sent: true };
         const withWhatsApp = members.find((m) => m.tenant!.cwBotTokenEnc);
         const email = members.find((m) => m.email)?.email;
-        if (!withWhatsApp && email && c.mailer.configured) {
+        if (!withWhatsApp && (!email || !c.mailer.configured)) {
+          // A staff member of a business whose WhatsApp isn't connected yet, with no email on file: say so.
+          return {
+            sent: false,
+            channel: 'none' as const,
+            message: "We can't send you a code yet: your business's WhatsApp isn't connected. Ask the owner to add your email in Settings → Team, then try again.",
+            devCode: isProd() ? undefined : issued.code,
+          };
+        }
+        if (!withWhatsApp && email) {
           // Self-signup clients until their WhatsApp number is connected: the code goes by email.
           const mail = reportEmail({
             title: `Your NextAi login code: ${issued.code}`,
@@ -102,13 +128,14 @@ export const appAuthRoutes =
       const members = await membershipsForPhone(c, user.phone);
       const chosen = members.find((m) => m.id === user.id);
       if (!chosen) throw unauthorized();
+      await activateInvited(c, user.phone);
       return issueSession(c, req, reply, chosen, members);
     });
 
     app.post('/otp/verify', { ...strict, schema: { tags: ['auth'], body: otpVerifySchema, response: { 200: tokenResponse } } }, async (req, reply) => {
-      const phone = normalizePhone(req.body.phone);
+      const { phone, members } = await resolveLoginPhone(c, req.body.phone);
       if (!(await checkOtp(c.redis, phone, req.body.code))) throw unauthorized('Invalid or expired code');
-      const members = await membershipsForPhone(c, phone);
+      await activateInvited(c, phone);
       const chosen = (req.body.tenantId && members.find((m) => m.tenantId === req.body.tenantId)) || members[0];
       if (!chosen) throw unauthorized();
       return issueSession(c, req, reply, chosen, members);

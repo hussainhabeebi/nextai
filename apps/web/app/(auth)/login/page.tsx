@@ -39,9 +39,13 @@ export default function LoginPage() {
     setBusy(true);
     setError('');
     try {
-      const r = await api.post<{ sent: boolean; channel?: 'whatsapp' | 'email'; devCode?: string }>('/v1/auth/otp/request', { phone });
+      const r = await api.post<{ sent: boolean; channel?: 'whatsapp' | 'email' | 'none'; message?: string; devCode?: string }>('/v1/auth/otp/request', { phone });
+      if (r.channel === 'none' && !r.devCode) {
+        setError(r.message ?? "We couldn't send you a code yet.");
+        return;
+      }
       if (r.devCode) setCode(r.devCode); // development only
-      setChannel(r.channel ?? 'whatsapp');
+      setChannel(r.channel === 'email' ? 'email' : 'whatsapp');
       setStep('code');
     } catch (e) {
       setError((e as ApiError).message);
@@ -78,7 +82,7 @@ export default function LoginPage() {
       {step === 'phone' && (
         <form className="space-y-4" onSubmit={(e) => (e.preventDefault(), void request())}>
           <Field label={t('auth.phone')} hint="We will send a 6-digit code to your WhatsApp (or to your email until WhatsApp is connected).">
-            <Input inputMode="tel" autoComplete="tel" placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={8} />
+            <Input inputMode="tel" autoComplete="tel" placeholder="98765 43210 or 050 123 4567" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={8} />
           </Field>
           <Button size="lg" disabled={busy || phone.length < 8}>
             {t('auth.sendOtp')}
