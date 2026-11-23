@@ -7,13 +7,16 @@ import { env } from '../../config/env.js';
 import type { Container } from '../../container.js';
 import { randomToken } from '../../lib/crypto.js';
 import { tenantDb, withSystemTx } from '../../lib/db.js';
-import { badRequest, notFound } from '../../lib/errors.js';
+import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { audit } from '../../modules/audit/audit.js';
 import { installDefaultPlaybook } from '../../modules/lifecycle/engine.js';
 import { lifecycleReport } from '../../modules/lifecycle/report.js';
 import { sealLeadWebhookSecret } from '../../modules/tenants/secrets.js';
 
-const tenantParam = z.object({ id: z.string().uuid() });
+function requireRole(req: FastifyRequest, roles: string[]) {
+  if (!req.user?.role || !roles.includes(req.user.role)) throw forbidden('Only the business owner can do this');
+}
+
 const role = z.enum(LIFECYCLE_ROLES);
 const audience = z.enum(REMINDER_AUDIENCES);
 /** -60 days … +400 days, in minutes. */
@@ -34,25 +37,21 @@ const levelBody = z.object({
 });
 
 /**
- * Lifecycle (lead-to-customer) admin: staff, playbook rules and their reminder levels — each level can be
- * created, edited, switched off or deleted per tenant. Tenant-scoped through tenantDb (RLS) for the tenant
- * chosen in the URL; every change is audited.
+ * Sales pipeline (lead-to-customer lifecycle) for the logged-in business: staff, playbook rules and their
+ * reminder levels (each can be created, edited, switched off or deleted), timers, report and settings.
+ * Tenant-scoped through tenantDb (RLS) for the business in the login token; every change is audited.
  */
-export const lifecycleAdminRoutes =
+export const lifecycleRoutes =
   (c: Container): FastifyPluginAsyncZod =>
   async (app) => {
-    const anyAdmin = { onRequest: app.requireAdmin() };
-    const ops = { onRequest: app.requireAdmin(['super_admin', 'support']) };
+    // Owner manages; the business's accountant can view. Business = the logged-in user's (never from the URL).
+    const viewer = { preHandler: async (req: FastifyRequest) => requireRole(req, ['owner', 'tenant_accountant']) };
+    const owner = { preHandler: async (req: FastifyRequest) => requireRole(req, ['owner']) };
     const logChange = (req: FastifyRequest, tenantId: string, action: string, entity: string, entityId?: string, before?: unknown, after?: unknown) =>
-      audit(c.prisma, { tenantId, actorId: req.admin!.sub, actorType: 'admin', channel: 'admin', action, entity, entityId, before, after, ip: req.ip });
-    const tenantOr404 = async (id: string) => {
-      const t = await withSystemTx(c.prisma, (tx) => tx.tenant.findUnique({ where: { id } }));
-      if (!t) throw notFound('Tenant');
-      return t;
-    };
+      audit(c.prisma, { tenantId, actorId: req.user!.sub, actorType: 'user', channel: 'app', action, entity, entityId, before, after, ip: req.ip });
 
-    app.get('/tenants/:id/lifecycle', { ...anyAdmin, schema: { tags: ['admin'], params: tenantParam } }, async (req) => {
-      const t = await tenantOr404(req.params.id);
+    app.get('/lifecycle', { ...viewer, schema: { tags: ['app'] } }, async (req) => {
+      const t = req.tenant!;
       const db = tenantDb(c.prisma, t.id);
       const [rules, staff, open] = await Promise.all([
         db.lifecycleRule.findMany({ include: { levels: { orderBy: { level: 'asc' } } }, orderBy: [{ stage: 'asc' }, { key: 'asc' }] }),
@@ -68,8 +67,8 @@ export const lifecycleAdminRoutes =
       };
     });
 
-    app.post('/tenants/:id/lifecycle/install', { ...ops, schema: { tags: ['admin'], params: tenantParam } }, async (req) => {
-      const t = await tenantOr404(req.params.id);
+    app.post('/lifecycle/install', { ...owner, schema: { tags: ['app'] } }, async (req) => {
+      const t = req.tenant!;
       const r = await installDefaultPlaybook(c.prisma, t.id);
       await logChange(req, t.id, 'lifecycle.install', 'lifecycle_rule', undefined, undefined, r);
       return r;
@@ -77,31 +76,31 @@ export const lifecycleAdminRoutes =
 
     // ---------------- Rules ----------------
     app.patch(
-      '/tenants/:id/lifecycle/rules/:ruleId',
+      '/lifecycle/rules/:ruleId',
       {
-        ...ops,
+        ...owner,
         schema: {
-          tags: ['admin'],
-          params: tenantParam.extend({ ruleId: z.string().uuid() }),
+          tags: ['app'],
+          params: z.object({ ruleId: z.string().uuid() }),
           body: z.object({ enabled: z.boolean(), name: z.string().min(2).max(140), ownerRole: role, escalationRole: role }).partial(),
         },
       },
       async (req) => {
-        const db = tenantDb(c.prisma, (await tenantOr404(req.params.id)).id);
+        const db = tenantDb(c.prisma, req.tenant!.id);
         const before = await db.lifecycleRule.findFirst({ where: { id: req.params.ruleId } });
         if (!before) throw notFound('Rule');
         const after = await db.lifecycleRule.update({ where: { id: before.id }, data: req.body });
-        await logChange(req, req.params.id, 'lifecycle.rule.update', 'lifecycle_rule', after.id, before, after);
+        await logChange(req, req.tenant!.id, 'lifecycle.rule.update', 'lifecycle_rule', after.id, before, after);
         return after;
       },
     );
 
     // ---------------- Reminder levels ----------------
     app.post(
-      '/tenants/:id/lifecycle/rules/:ruleId/levels',
-      { ...ops, schema: { tags: ['admin'], params: tenantParam.extend({ ruleId: z.string().uuid() }), body: levelBody } },
+      '/lifecycle/rules/:ruleId/levels',
+      { ...owner, schema: { tags: ['app'], params: z.object({ ruleId: z.string().uuid() }), body: levelBody } },
       async (req) => {
-        const tenantId = (await tenantOr404(req.params.id)).id;
+        const tenantId = req.tenant!.id;
         const db = tenantDb(c.prisma, tenantId);
         const rule = await db.lifecycleRule.findFirst({ where: { id: req.params.ruleId }, include: { levels: true } });
         if (!rule) throw notFound('Rule');
@@ -113,10 +112,10 @@ export const lifecycleAdminRoutes =
     );
 
     app.patch(
-      '/tenants/:id/lifecycle/levels/:levelId',
-      { ...ops, schema: { tags: ['admin'], params: tenantParam.extend({ levelId: z.string().uuid() }), body: levelBody.partial() } },
+      '/lifecycle/levels/:levelId',
+      { ...owner, schema: { tags: ['app'], params: z.object({ levelId: z.string().uuid() }), body: levelBody.partial() } },
       async (req) => {
-        const tenantId = (await tenantOr404(req.params.id)).id;
+        const tenantId = req.tenant!.id;
         const db = tenantDb(c.prisma, tenantId);
         const before = await db.reminderLevel.findFirst({ where: { id: req.params.levelId } });
         if (!before) throw notFound('Reminder level');
@@ -127,8 +126,8 @@ export const lifecycleAdminRoutes =
       },
     );
 
-    app.delete('/tenants/:id/lifecycle/levels/:levelId', { ...ops, schema: { tags: ['admin'], params: tenantParam.extend({ levelId: z.string().uuid() }) } }, async (req) => {
-      const tenantId = (await tenantOr404(req.params.id)).id;
+    app.delete('/lifecycle/levels/:levelId', { ...owner, schema: { tags: ['app'], params: z.object({ levelId: z.string().uuid() }) } }, async (req) => {
+      const tenantId = req.tenant!.id;
       const db = tenantDb(c.prisma, tenantId);
       const before = await db.reminderLevel.findFirst({ where: { id: req.params.levelId } });
       if (!before) throw notFound('Reminder level');
@@ -146,8 +145,8 @@ export const lifecycleAdminRoutes =
       active: z.boolean().default(true),
     });
 
-    app.post('/tenants/:id/staff', { ...ops, schema: { tags: ['admin'], params: tenantParam, body: staffBody } }, async (req) => {
-      const t = await tenantOr404(req.params.id);
+    app.post('/staff', { ...owner, schema: { tags: ['app'], body: staffBody } }, async (req) => {
+      const t = req.tenant!;
       const db = tenantDb(c.prisma, t.id);
       const created = await db.staffMember.create({ data: { ...req.body, phone: phoneFor(req.body.phone, t.country), tenantId: t.id } });
       await logChange(req, t.id, 'lifecycle.staff.create', 'staff_member', created.id, undefined, created);
@@ -155,10 +154,10 @@ export const lifecycleAdminRoutes =
     });
 
     app.patch(
-      '/tenants/:id/staff/:staffId',
-      { ...ops, schema: { tags: ['admin'], params: tenantParam.extend({ staffId: z.string().uuid() }), body: staffBody.partial() } },
+      '/staff/:staffId',
+      { ...owner, schema: { tags: ['app'], params: z.object({ staffId: z.string().uuid() }), body: staffBody.partial() } },
       async (req) => {
-        const t = await tenantOr404(req.params.id);
+        const t = req.tenant!;
         const db = tenantDb(c.prisma, t.id);
         const before = await db.staffMember.findFirst({ where: { id: req.params.staffId } });
         if (!before) throw notFound('Staff member');
@@ -171,10 +170,10 @@ export const lifecycleAdminRoutes =
 
     // ---------------- Timers ----------------
     app.get(
-      '/tenants/:id/lifecycle/timers',
-      { ...anyAdmin, schema: { tags: ['admin'], params: tenantParam, querystring: z.object({ status: z.enum(['open', 'done', 'cancelled']).default('open'), ruleKey: z.string().max(60).optional() }) } },
+      '/lifecycle/timers',
+      { ...viewer, schema: { tags: ['app'], querystring: z.object({ status: z.enum(['open', 'done', 'cancelled']).default('open'), ruleKey: z.string().max(60).optional() }) } },
       async (req) => {
-        const db = tenantDb(c.prisma, (await tenantOr404(req.params.id)).id);
+        const db = tenantDb(c.prisma, req.tenant!.id);
         const items = await db.lifecycleTimer.findMany({
           where: { status: req.query.status, ...(req.query.ruleKey ? { rule: { key: req.query.ruleKey } } : {}) },
           include: { rule: { select: { key: true, name: true, stage: true } }, owner: { select: { name: true } } },
@@ -186,10 +185,10 @@ export const lifecycleAdminRoutes =
     );
 
     app.post(
-      '/tenants/:id/lifecycle/timers/:timerId/close',
-      { ...ops, schema: { tags: ['admin'], params: tenantParam.extend({ timerId: z.string().uuid() }), body: z.object({ status: z.enum(['done', 'cancelled']).default('done') }) } },
+      '/lifecycle/timers/:timerId/close',
+      { ...owner, schema: { tags: ['app'], params: z.object({ timerId: z.string().uuid() }), body: z.object({ status: z.enum(['done', 'cancelled']).default('done') }) } },
       async (req) => {
-        const tenantId = (await tenantOr404(req.params.id)).id;
+        const tenantId = req.tenant!.id;
         const db = tenantDb(c.prisma, tenantId);
         const r = await db.lifecycleTimer.updateMany({ where: { id: req.params.timerId, status: 'open' }, data: { status: req.body.status, completedAt: new Date() } });
         if (r.count === 0) throw notFound('Open timer');
@@ -199,8 +198,8 @@ export const lifecycleAdminRoutes =
     );
 
     // ---------------- Settings & report ----------------
-    app.patch('/tenants/:id/lifecycle/settings', { ...ops, schema: { tags: ['admin'], params: tenantParam, body: lifecycleSettingsSchema.partial() } }, async (req) => {
-      const t = await tenantOr404(req.params.id);
+    app.patch('/lifecycle/settings', { ...owner, schema: { tags: ['app'], body: lifecycleSettingsSchema.partial() } }, async (req) => {
+      const t = req.tenant!;
       const current = tenantSettingsSchema.parse(t.settings ?? {});
       const lifecycle = lifecycleSettingsSchema.parse({ ...current.lifecycle, ...req.body });
       const settings = { ...(t.settings as object), lifecycle } as Prisma.InputJsonValue;
@@ -210,15 +209,15 @@ export const lifecycleAdminRoutes =
     });
 
     app.get(
-      '/tenants/:id/lifecycle/report',
-      { ...anyAdmin, schema: { tags: ['admin'], params: tenantParam, querystring: z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }) } },
-      async (req) => lifecycleReport(c, (await tenantOr404(req.params.id)).id, req.query.days),
+      '/lifecycle/report',
+      { ...viewer, schema: { tags: ['app'], querystring: z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }) } },
+      async (req) => lifecycleReport(c, req.tenant!.id, req.query.days),
     );
 
     // ---------------- Lead webhook secret ----------------
     /** Generates (or rotates) the Leadvyne signing secret. It is shown once; only the ciphertext is stored. */
-    app.post('/tenants/:id/lifecycle/lead-webhook-secret', { onRequest: app.requireAdmin(['super_admin']), schema: { tags: ['admin'], params: tenantParam } }, async (req) => {
-      const t = await tenantOr404(req.params.id);
+    app.post('/lifecycle/lead-webhook-secret', { ...owner, schema: { tags: ['app'] } }, async (req) => {
+      const t = req.tenant!;
       const secret = randomToken(32);
       await withSystemTx(c.prisma, (tx) => tx.tenant.update({ where: { id: t.id }, data: { leadWebhookSecretEnc: sealLeadWebhookSecret(t.id, secret) } }));
       await logChange(req, t.id, 'lifecycle.lead_webhook.rotate', 'tenant', t.id);

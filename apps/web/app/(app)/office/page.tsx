@@ -3,11 +3,12 @@
 import { LIFECYCLE_ROLES } from '@nextai/shared';
 import { Maximize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { H1, Stat, Table } from '@/components/admin/table';
+import { Stat, Table } from '@/components/admin/table';
+import { Page } from '@/components/page';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/input';
-import { adminApi } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
 type Card = {
@@ -59,8 +60,8 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const time = (s: string | null) => (s ? new Date(s).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—');
 const when = (s: string) => new Date(s).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 
-function FloorView({ tenantId }: { tenantId: string }) {
-  const { data, reload } = useApi<Floor>(`/admin/v1/tenants/${tenantId}/office/floor`, adminApi);
+function FloorView() {
+  const { data, reload } = useApi<Floor>(`/v1/office/floor`);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const t = setInterval(() => void reload(), 30_000);
@@ -129,10 +130,9 @@ function FloorView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function AttendanceView({ tenantId }: { tenantId: string }) {
+function AttendanceView() {
   const { data } = useApi<{ from: string; to: string; rows: Array<{ id: string; staffName: string; date: string; checkInAt: string | null; checkOutAt: string | null; late: boolean; note: string | null }>; leaves: Array<{ id: string; staffName: string; fromDate: string; toDate: string; reason: string | null; status: string }> }>(
-    `/admin/v1/tenants/${tenantId}/office/attendance`,
-    adminApi,
+    `/v1/office/attendance`,
   );
   const hours = (a: string | null, b: string | null) => (a && b ? `${((Date.parse(b) - Date.parse(a)) / 3_600_000).toFixed(1)} h` : '—');
   return (
@@ -156,11 +156,10 @@ function AttendanceView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function StandupView({ tenantId }: { tenantId: string }) {
+function StandupView() {
   const [date, setDate] = useState('');
   const { data } = useApi<{ date: string; items: Array<{ staffId: string; name: string; plan: string | null; blockers: string | null; done: string | null; handover: string | null; handoverTo: string | null }> }>(
-    `/admin/v1/tenants/${tenantId}/office/standups${date ? `?date=${date}` : ''}`,
-    adminApi,
+    `/v1/office/standups${date ? `?date=${date}` : ''}`,
   );
   return (
     <div className="grid min-w-0 gap-3">
@@ -179,12 +178,12 @@ function StandupView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function ApprovalsView({ tenantId }: { tenantId: string }) {
+function ApprovalsView() {
   const [status, setStatus] = useState('pending');
-  const { data, reload } = useApi<{ items: Approval[] }>(`/admin/v1/tenants/${tenantId}/office/approvals?status=${status}`, adminApi);
+  const { data, reload } = useApi<{ items: Approval[] }>(`/v1/office/approvals?status=${status}`);
   const decide = async (code: number, decision: 'approved' | 'rejected') => {
     const note = decision === 'rejected' ? (prompt('Reason (optional)') ?? undefined) : undefined;
-    await adminApi.request(`/admin/v1/tenants/${tenantId}/office/approvals/${code}/decide`, { method: 'POST', json: { decision, note } });
+    await api.request(`/v1/office/approvals/${code}/decide`, { method: 'POST', json: { decision, note } });
     await reload();
   };
   return (
@@ -218,12 +217,12 @@ function ApprovalsView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function AnnouncementsView({ tenantId }: { tenantId: string }) {
-  const { data, reload } = useApi<{ items: Array<{ id: string; text: string; roles: string[]; createdAt: string; from: string; acked: string[]; pending: string[] }> }>(`/admin/v1/tenants/${tenantId}/office/announcements`, adminApi);
+function AnnouncementsView() {
+  const { data, reload } = useApi<{ items: Array<{ id: string; text: string; roles: string[]; createdAt: string; from: string; acked: string[]; pending: string[] }> }>(`/v1/office/announcements`);
   const [text, setText] = useState('');
   const [roles, setRoles] = useState<string[]>([]);
   const send = async () => {
-    await adminApi.request(`/admin/v1/tenants/${tenantId}/office/announcements`, { method: 'POST', json: { text, roles } });
+    await api.request(`/v1/office/announcements`, { method: 'POST', json: { text, roles } });
     setText('');
     await reload();
   };
@@ -252,8 +251,8 @@ function AnnouncementsView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function MeetingsView({ tenantId }: { tenantId: string }) {
-  const { data } = useApi<{ items: Array<{ id: string; code: number; title: string; startsAt: string; durationMin: number; status: string; organizer: string | null; attendees: string[]; notes: string | null; taskNames: string[] }> }>(`/admin/v1/tenants/${tenantId}/office/meetings`, adminApi);
+function MeetingsView() {
+  const { data } = useApi<{ items: Array<{ id: string; code: number; title: string; startsAt: string; durationMin: number; status: string; organizer: string | null; attendees: string[]; notes: string | null; taskNames: string[] }> }>(`/v1/office/meetings`);
   return (
     <div className="grid min-w-0 gap-3">
       <p className="text-sm text-muted">Staff schedule meetings on WhatsApp: “meet Esha Akshay tomorrow 3pm onboarding sync”.</p>
@@ -273,9 +272,9 @@ function MeetingsView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function PerformanceView({ tenantId }: { tenantId: string }) {
+function PerformanceView() {
   const [days, setDays] = useState(7);
-  const { data } = useApi<{ items: Perf[] }>(`/admin/v1/tenants/${tenantId}/office/performance?days=${days}`, adminApi);
+  const { data } = useApi<{ items: Perf[] }>(`/v1/office/performance?days=${days}`);
   return (
     <div className="grid min-w-0 gap-3 [&>*]:min-w-0">
       <Select className="w-40" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period">
@@ -300,42 +299,39 @@ function PerformanceView({ tenantId }: { tenantId: string }) {
   );
 }
 
-function SettingsView({ tenantId }: { tenantId: string }) {
-  const { data, reload } = useApi<{ settings: OfficeSettings; staffInboxId: number | null; customerInboxId: number | null; staff: Array<{ id: string; name: string; active: boolean; backupStaffId: string | null; erpEmployee: string | null }> }>(
-    `/admin/v1/tenants/${tenantId}/office/settings`,
-    adminApi,
+function SettingsView() {
+  const { data, reload } = useApi<{ settings: OfficeSettings; staffNumberConnected: boolean; staff: Array<{ id: string; name: string; active: boolean; backupStaffId: string | null; erpEmployee: string | null }> }>(
+    `/v1/office/settings`,
   );
   const [f, setF] = useState<OfficeSettings | null>(null);
-  const [inbox, setInbox] = useState('');
   const [msg, setMsg] = useState('');
   useEffect(() => {
     if (data) {
       setF(data.settings);
-      setInbox(data.staffInboxId ? String(data.staffInboxId) : '');
     }
   }, [data]);
   if (!data || !f) return <div className="h-40 animate-pulse rounded-xl bg-line/60" />;
   const save = async () => {
     setMsg('');
     try {
-      await adminApi.request(`/admin/v1/tenants/${tenantId}/office/settings`, { method: 'PATCH', json: { settings: f, staffInboxId: inbox ? Number(inbox) : null } });
+      await api.request(`/v1/office/settings`, { method: 'PATCH', json: { settings: f } });
       setMsg('Saved.');
       await reload();
     } catch (e) {
       setMsg((e as Error).message);
     }
   };
-  const patchStaff = async (id: string, json: Record<string, unknown>) => (await adminApi.request(`/admin/v1/tenants/${tenantId}/office/staff/${id}`, { method: 'PATCH', json }), reload());
+  const patchStaff = async (id: string, json: Record<string, unknown>) => (await api.request(`/v1/office/staff/${id}`, { method: 'PATCH', json }), reload());
   const row = 'flex flex-wrap items-center gap-2';
   return (
     <div className="grid min-w-0 gap-4 text-sm [&>*]:min-w-0">
       <form className="grid gap-3 rounded-xl border border-line bg-card p-4" onSubmit={(e) => (e.preventDefault(), void save())}>
         <h2 className="font-semibold">Staff WhatsApp number</h2>
-        <label className={row}>
-          Chatwoot inbox id of the team's number
-          <Input className="w-36" inputMode="numeric" value={inbox} onChange={(e) => setInbox(e.target.value.replace(/\D/g, ''))} placeholder="e.g. 12" />
-          <span className="text-muted">(customer number is inbox {data.customerInboxId ?? '—'})</span>
-        </label>
+        <p className={data.staffNumberConnected ? 'text-green-700' : 'text-muted'}>
+          {data.staffNumberConnected
+            ? '✅ Connected. Your team messages this number to check in, see their tasks, ask for leave and approvals.'
+            : 'Not connected yet. Send NextAi support the WhatsApp number your team will use; until then staff reminders come from your business number.'}
+        </p>
         <h2 className="mt-2 font-semibold">Office hours</h2>
         <label className={row}><input type="checkbox" className="h-5 w-5" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Virtual office on</label>
         <div className={row}>
@@ -385,41 +381,25 @@ function SettingsView({ tenantId }: { tenantId: string }) {
 const TABS = ['floor', 'attendance', 'stand-ups', 'approvals', 'announcements', 'meetings', 'performance', 'settings'] as const;
 
 export default function Office() {
-  const { data: tenants } = useApi<{ items: Array<{ id: string; name: string }> }>('/admin/v1/tenants', adminApi);
-  const [tenantId, setTenantId] = useState('');
   const [tab, setTab] = useState<(typeof TABS)[number]>('floor');
-  useEffect(() => {
-    if (!tenantId && tenants?.items[0]) setTenantId(tenants.items[0].id);
-  }, [tenants, tenantId]);
   return (
-    <div className="min-w-0">
-      <H1
-        action={
-          <Select value={tenantId} onChange={(e) => setTenantId(e.target.value)} aria-label="Tenant">
-            {tenants?.items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </Select>
-        }
-      >
-        Virtual office
-      </H1>
-      <p className="mb-4 text-sm text-muted">The team works from WhatsApp on the staff number: check-in, tasks, leave, approvals, meetings. This is the live view.</p>
+    <Page title="Office" back="/" size="wide">
+      <p className="mb-4 text-sm text-muted">Your team works from WhatsApp on the staff number: check-in, tasks, leave, approvals, meetings. This is the live view.</p>
       <div className="mb-4 flex gap-1 overflow-x-auto">
         {TABS.map((t) => (
           <Button key={t} variant={tab === t ? 'primary' : 'ghost'} onClick={() => setTab(t)}>{t[0]!.toUpperCase() + t.slice(1)}</Button>
         ))}
       </div>
-      {tenantId && (
-        <div key={`${tenantId}:${tab}`}>
-          {tab === 'floor' && <FloorView tenantId={tenantId} />}
-          {tab === 'attendance' && <AttendanceView tenantId={tenantId} />}
-          {tab === 'stand-ups' && <StandupView tenantId={tenantId} />}
-          {tab === 'approvals' && <ApprovalsView tenantId={tenantId} />}
-          {tab === 'announcements' && <AnnouncementsView tenantId={tenantId} />}
-          {tab === 'meetings' && <MeetingsView tenantId={tenantId} />}
-          {tab === 'performance' && <PerformanceView tenantId={tenantId} />}
-          {tab === 'settings' && <SettingsView tenantId={tenantId} />}
-        </div>
-      )}
-    </div>
+      <div key={tab}>
+        {tab === 'floor' && <FloorView />}
+        {tab === 'attendance' && <AttendanceView />}
+        {tab === 'stand-ups' && <StandupView />}
+        {tab === 'approvals' && <ApprovalsView />}
+        {tab === 'announcements' && <AnnouncementsView />}
+        {tab === 'meetings' && <MeetingsView />}
+        {tab === 'performance' && <PerformanceView />}
+        {tab === 'settings' && <SettingsView />}
+      </div>
+    </Page>
   );
 }

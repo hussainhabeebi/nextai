@@ -101,7 +101,7 @@ export const platformRoutes =
         users: tenant.users.map((u) => ({ id: u.id, name: u.name, phone: u.phone, role: u.role, status: u.status, lastLoginAt: u.lastLoginAt })),
         connections: {
           erpnext: { configured: !!(erpApiKeyEnc && erpApiSecretEnc), siteUrl: tenant.erpSiteUrl, health: health ? JSON.parse(health) : null },
-          chatwoot: { configured: !!cwBotTokenEnc, accountId: tenant.cwAccountId, inboxId: tenant.cwInboxId },
+          chatwoot: { configured: !!cwBotTokenEnc, accountId: tenant.cwAccountId, inboxId: tenant.cwInboxId, staffInboxId: tenant.cwStaffInboxId },
           erpWebhook: { configured: !!erpWebhookSecretEnc },
         },
         limits: await planLimits(c, tenant),

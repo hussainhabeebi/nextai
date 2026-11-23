@@ -15,7 +15,11 @@ let app: FastifyInstance;
 let A: Awaited<ReturnType<typeof createTenant>>;
 const STAFF_INBOX = 777000 + Math.floor(Math.random() * 1000);
 const ADMIN = '00000000-0000-4000-8000-000000000001';
-const h = async () => ({ authorization: `Bearer ${await signAccess({ sub: ADMIN, prole: 'super_admin', typ: 'admin' })}` });
+const hAdmin = async () => ({ authorization: `Bearer ${await signAccess({ sub: ADMIN, prole: 'super_admin', typ: 'admin' })}` });
+/** Business-app login for tenant A (the office is managed by the business owner, not the platform admin). */
+const h = async (role: 'owner' | 'tenant_accountant' | 'staff' = 'owner') => ({
+  authorization: `Bearer ${await signAccess({ sub: role === 'owner' ? A.owner.id : '00000000-0000-4000-8000-0000000000bb', tid: A.tenant.id, role, typ: 'app' })}`,
+});
 
 const HABEEB = '+919700000001';
 const ESHA = '+919700000002';
@@ -38,7 +42,8 @@ beforeAll(async () => {
   await seed(c.prisma);
   A = await createTenant(c.prisma, { settings: { timezone: 'Asia/Kolkata' } });
   app = await buildApp(c);
-  const r = await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/office/settings`, headers: await h(), payload: { staffInboxId: STAFF_INBOX } });
+  // The staff number is connected by NextAi support (admin), like the customer inbox.
+  const r = await app.inject({ method: 'PUT', url: `/admin/v1/tenants/${A.tenant.id}/staff-inbox`, headers: await hAdmin(), payload: { inboxId: STAFF_INBOX } });
   expect(r.statusCode).toBe(200);
   for (const [name, phone, roles, erpUser] of [
     ['Habeeb', HABEEB, ['management', 'support'], 'habeeb@nextai.test'],
@@ -46,7 +51,7 @@ beforeAll(async () => {
     ['Akshay', AKSHAY, ['qa'], 'akshay@nextai.test'],
     ['Ali', ALI, ['sales'], 'ali@nextai.test'],
   ] as const) {
-    await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h(), payload: { name, phone, roles, erpUser } });
+    await app.inject({ method: 'POST', url: `/v1/staff`, headers: await h(), payload: { name, phone, roles, erpUser } });
   }
   await installDefaultPlaybook(c.prisma, A.tenant.id);
   c.chatwoot(await tenant(), 'staff');
@@ -58,7 +63,7 @@ afterAll(async () => {
 
 describe('staff number routing', () => {
   it('rejects the customer inbox as staff number and turns away unknown numbers', async () => {
-    const bad = await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/office/settings`, headers: await h(), payload: { staffInboxId: A.tenant.cwInboxId } });
+    const bad = await app.inject({ method: 'PUT', url: `/admin/v1/tenants/${A.tenant.id}/staff-inbox`, headers: await hAdmin(), payload: { inboxId: A.tenant.cwInboxId } });
     expect(bad.statusCode).toBe(400);
     expect(await say('+919799999999', 'hi')).toBe('unknown_staff');
     expect(lastReply('+919799999999')).toContain('for the NextAi team');
@@ -123,7 +128,7 @@ describe('leave, approvals and leave cover', () => {
   it('leave goes to management for approval; while away, reminders go to the backup', async () => {
     const ali = await staffId(ALI);
     const esha = await staffId(ESHA);
-    await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/office/staff/${ali}`, headers: await h(), payload: { backupStaffId: esha } });
+    await app.inject({ method: 'PATCH', url: `/v1/office/staff/${ali}`, headers: await h(), payload: { backupStaffId: esha } });
 
     await say(ALI, 'leave today fever');
     expect(lastReply(ALI)).toMatch(/Leave request #(\d+) sent/);
@@ -152,10 +157,10 @@ describe('leave, approvals and leave cover', () => {
     expect(a.amount).toBe('15%');
     await say(HABEEB, 'approvals');
     expect(lastReply(HABEEB)).toContain(`#${a.code}`);
-    const r = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/office/approvals/${a.code}/decide`, headers: await h(), payload: { decision: 'rejected', note: 'max 10%' } });
+    const r = await app.inject({ method: 'POST', url: `/v1/office/approvals/${a.code}/decide`, headers: await h(), payload: { decision: 'rejected', note: 'max 10%' } });
     expect(r.json().status).toBe('rejected');
     expect(staffCw().sent.some((m) => m.content.includes('❌ Rejected') && m.content.includes('max 10%'))).toBe(true);
-    const again = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/office/approvals/${a.code}/decide`, headers: await h(), payload: { decision: 'approved' } });
+    const again = await app.inject({ method: 'POST', url: `/v1/office/approvals/${a.code}/decide`, headers: await h(), payload: { decision: 'approved' } });
     expect(again.statusCode).toBe(400);
   });
 });
@@ -168,7 +173,7 @@ describe('announcements', () => {
     expect(lastReply(HABEEB)).toContain('Sent to 1 person');
     await say(ALI, 'ok');
     expect(lastReply(ALI)).toContain('Acknowledged');
-    const list = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/office/announcements`, headers: await h() })).json();
+    const list = (await app.inject({ method: 'GET', url: `/v1/office/announcements`, headers: await h() })).json();
     expect(list.items[0]).toMatchObject({ text: 'Target 10 demos this week', roles: ['sales'], acked: ['Ali'], pending: [] });
   });
 });
@@ -237,17 +242,36 @@ describe('daily and weekly schedule', () => {
 });
 
 describe('office dashboard API', () => {
+  it('is the business owner\'s: the accountant can view, staff cannot, another business sees only its own data', async () => {
+    expect((await app.inject({ method: 'GET', url: '/v1/office/floor', headers: await h('tenant_accountant') })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'PATCH', url: '/v1/office/settings', headers: await h('tenant_accountant'), payload: { settings: { workStart: '10:00' } } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/v1/office/floor', headers: await h('staff') })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/v1/lifecycle', headers: await h('staff') })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/v1/office/floor' })).statusCode).toBe(401);
+    // The office endpoints no longer exist in the admin console.
+    expect((await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/office/floor`, headers: await hAdmin() })).statusCode).toBe(404);
+
+    const B = await createTenant(c.prisma);
+    const hB = { authorization: `Bearer ${await signAccess({ sub: B.owner.id, tid: B.tenant.id, role: 'owner', typ: 'app' })}` };
+    const floorB = (await app.inject({ method: 'GET', url: '/v1/office/floor', headers: hB })).json();
+    expect(floorB.stats.total).toBe(0);
+    expect(floorB.cards).toEqual([]);
+    const settingsB = (await app.inject({ method: 'GET', url: '/v1/office/settings', headers: hB })).json();
+    expect(settingsB.staffNumberConnected).toBe(false);
+    expect((await app.inject({ method: 'GET', url: '/v1/office/settings', headers: await h() })).json().staffNumberConnected).toBe(true);
+  });
+
   it('floor, performance, attendance and stand-ups', async () => {
-    const floor = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/office/floor`, headers: await h() })).json();
+    const floor = (await app.inject({ method: 'GET', url: `/v1/office/floor`, headers: await h() })).json();
     expect(floor.stats.total).toBe(4);
     expect(floor.stats.onLeave).toBe(1);
     expect(floor.cards.find((x: { name: string }) => x.name === 'Ali').presence).toBe('leave');
-    const perf = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/office/performance?days=7`, headers: await h() })).json();
+    const perf = (await app.inject({ method: 'GET', url: `/v1/office/performance?days=7`, headers: await h() })).json();
     expect(perf.items.find((x: { name: string }) => x.name === 'Ali')).toMatchObject({ stepsDone: 1, onTime: 1 });
-    const att = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/office/attendance`, headers: await h() })).json();
+    const att = (await app.inject({ method: 'GET', url: `/v1/office/attendance`, headers: await h() })).json();
     expect(att.rows.some((r: { staffName: string }) => r.staffName === 'Esha')).toBe(true);
     expect(att.leaves[0]).toMatchObject({ staffName: 'Ali', status: 'approved' });
-    const su = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/office/standups`, headers: await h() })).json();
+    const su = (await app.inject({ method: 'GET', url: `/v1/office/standups`, headers: await h() })).json();
     expect(su.items.find((x: { name: string }) => x.name === 'Esha').blockers).toBe('waiting for ERPNext login');
   });
 

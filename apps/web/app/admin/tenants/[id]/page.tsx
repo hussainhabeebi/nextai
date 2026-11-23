@@ -21,7 +21,7 @@ interface Detail {
   settings: Record<string, unknown> & { provisioning?: Record<string, { status: string; note?: string; at: string }>; erpSetup?: { mode: string; status: string; step?: string; site?: string; attempts?: number; error?: string } };
   users: Array<{ id: string; name: string; phone: string; role: string; status: string; lastLoginAt: string | null }>;
   usageCounters: Array<{ period: string; messages: number; ocrPages: number; invoicesSent: number; aiCostMicros: number }>;
-  connections: { erpnext: { configured: boolean; siteUrl: string | null; health: { ok: boolean; latencyMs: number; at: string } | null }; chatwoot: { configured: boolean; inboxId: number | null }; erpWebhook: { configured: boolean } };
+  connections: { erpnext: { configured: boolean; siteUrl: string | null; health: { ok: boolean; latencyMs: number; at: string } | null }; chatwoot: { configured: boolean; inboxId: number | null; staffInboxId: number | null }; erpWebhook: { configured: boolean } };
   limits: { users: number; ocrPagesPerMonth: number; invoicesSentPerMonth: number };
 }
 
@@ -70,6 +70,7 @@ export default function TenantDetail() {
         <Conn name="Chatwoot" ok={t.connections.chatwoot.configured} detail={t.connections.chatwoot.inboxId ? `Inbox ${t.connections.chatwoot.inboxId}` : 'not mapped'} />
         <Conn name="ERPNext webhooks" ok={t.connections.erpWebhook.configured} detail={t.connections.erpWebhook.configured ? 'Secret set' : 'Not configured'} />
       </section>
+      <StaffInbox tenantId={t.id} current={t.connections.chatwoot.staffInboxId} customerInbox={t.connections.chatwoot.inboxId} canEdit={canOps} onSaved={() => void reload()} />
       {t.settings.provisioning && (
         <section>
           <h2 className="mb-2 font-semibold">Provisioning</h2>
@@ -104,6 +105,33 @@ export default function TenantDetail() {
         <pre className="overflow-x-auto rounded-xl border border-line bg-card p-3 text-xs">{JSON.stringify({ ...t.settings, provisioning: undefined }, null, 2)}</pre>
       </section>
     </div>
+  );
+}
+
+/** The team's separate WhatsApp number (second Chatwoot inbox) for the business's Office. The owner manages everything else in the app. */
+function StaffInbox({ tenantId, current, customerInbox, canEdit, onSaved }: { tenantId: string; current: number | null; customerInbox: number | null; canEdit: boolean; onSaved: () => void }) {
+  const [v, setV] = useState(current ? String(current) : '');
+  const [msg, setMsg] = useState('');
+  const save = async () => {
+    setMsg('');
+    try {
+      await adminApi.request(`/admin/v1/tenants/${tenantId}/staff-inbox`, { method: 'PUT', json: { inboxId: v ? Number(v) : null } });
+      setMsg('Saved.');
+      onSaved();
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  };
+  return (
+    <section className="rounded-xl border border-line bg-card p-4 text-sm">
+      <h2 className="mb-1 font-semibold">Staff WhatsApp number (Office)</h2>
+      <p className="mb-2 text-muted">Chatwoot inbox id of the team's own number. Customer number: inbox {customerInbox ?? '—'}. Leave empty to send staff messages from the customer number.</p>
+      <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => (e.preventDefault(), void save())}>
+        <input className="min-h-10 w-36 rounded-lg border border-line bg-bg px-3" inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, ''))} placeholder="e.g. 12" aria-label="Staff inbox id" disabled={!canEdit} />
+        {canEdit && <Button>Save</Button>}
+        {msg && <span className="text-muted">{msg}</span>}
+      </form>
+    </section>
   );
 }
 

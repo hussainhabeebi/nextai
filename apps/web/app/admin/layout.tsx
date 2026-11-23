@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, BarChart3, BellRing, Building2, CheckSquare, CreditCard, Flag, Gauge, Layers, LogOut, MessageSquare, Plug, PlusCircle, ScrollText, Shield, Users } from 'lucide-react';
+import { Activity, BarChart3, CheckSquare, CreditCard, Flag, Gauge, Layers, LogOut, MessageSquare, Plug, PlusCircle, ScrollText, Shield, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -16,8 +16,6 @@ const NAV = [
   { href: '/admin/users', label: 'Admin users', icon: Shield, roles: ['super_admin'] },
   { href: '/admin/plans', label: 'Plans & subs', icon: CreditCard },
   { href: '/admin/usage', label: 'Usage & cost', icon: BarChart3 },
-  { href: '/admin/office', label: 'Office', icon: Building2 },
-  { href: '/admin/lifecycle', label: 'Lifecycle', icon: BellRing },
   { href: '/admin/integrations', label: 'Integrations', icon: Plug },
   { href: '/admin/templates', label: 'Templates', icon: MessageSquare },
   { href: '/admin/audit', label: 'Audit log', icon: ScrollText },

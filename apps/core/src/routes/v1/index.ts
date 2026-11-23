@@ -8,6 +8,8 @@ import { billingRoutes } from './billing.js';
 import { onlinePaymentRoutes } from './online-payments.js';
 import { bankRoutes } from './bank.js';
 import { portalRoutes } from './portal.js';
+import { lifecycleRoutes } from './lifecycle.js';
+import { officeRoutes } from './office.js';
 
 export const v1Routes =
   (c: Container): FastifyPluginAsyncZod =>
@@ -24,5 +26,7 @@ export const v1Routes =
       await authed.register(onlinePaymentRoutes(c));
       await authed.register(bankRoutes(c));
       await authed.register(portalRoutes(c));
+      await authed.register(lifecycleRoutes(c));
+      await authed.register(officeRoutes(c));
     });
   };

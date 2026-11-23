@@ -9,8 +9,7 @@ import { BullJobQueue } from '../../lib/queue.js';
 import { env } from '../../config/env.js';
 import { audit } from '../../modules/audit/audit.js';
 import { adminAuthRoutes } from './auth.js';
-import { lifecycleAdminRoutes } from './lifecycle.js';
-import { officeAdminRoutes } from './office.js';
+import { staffInboxRoutes } from './staff-inbox.js';
 import { integrationRoutes } from './integrations.js';
 import { platformRoutes } from './platform.js';
 
@@ -27,8 +26,7 @@ export const adminRoutes =
   async (app) => {
     await app.register(adminAuthRoutes(c), { prefix: '/auth' });
     await app.register(platformRoutes(c));
-    await app.register(lifecycleAdminRoutes(c));
-    await app.register(officeAdminRoutes(c));
+    await app.register(staffInboxRoutes(c));
     await app.register(integrationRoutes(c));
 
     // Bull Board job monitor (super_admin only). The admin UI fetches a 10-minute token, then opens

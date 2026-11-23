@@ -17,12 +17,18 @@ const c = testContainer();
 let app: FastifyInstance;
 let A: Awaited<ReturnType<typeof createTenant>>;
 let B: Awaited<ReturnType<typeof createTenant>>;
-const ADMIN = '00000000-0000-4000-8000-000000000001';
-const h = async (prole: 'super_admin' | 'reviewer' | 'support') => ({ authorization: `Bearer ${await signAccess({ sub: ADMIN, prole, typ: 'admin' })}` });
+/** Business-app login for tenant A: the owner manages the pipeline; the accountant can view; staff cannot. */
+const h = async (who: 'owner' | 'accountant' | 'staff' = 'owner') => ({
+  authorization: `Bearer ${await signAccess(
+    who === 'owner'
+      ? { sub: A.owner.id, tid: A.tenant.id, role: 'owner', typ: 'app' }
+      : { sub: '00000000-0000-4000-8000-0000000000aa', tid: A.tenant.id, role: who === 'accountant' ? 'tenant_accountant' : 'staff', typ: 'app' },
+  )}`,
+});
 const MIN = 60_000;
 
 type Rule = { id: string; key: string; enabled: boolean; levels: Array<{ id: string; level: number; offsetMinutes: number; enabled: boolean }> };
-const lifecycle = async () => (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle`, headers: await h('support') })).json() as { rules: Rule[]; leadWebhook: { configured: boolean } };
+const lifecycle = async () => (await app.inject({ method: 'GET', url: `/v1/lifecycle`, headers: await h() })).json() as { rules: Rule[]; leadWebhook: { configured: boolean } };
 const rule = async (key: string) => (await lifecycle()).rules.find((r) => r.key === key)!;
 const sentTo = async (ruleRef: string) =>
   (await tenantDb(c.prisma, A.tenant.id).outboundMessage.findMany({ where: { ref: { startsWith: 'lc:' } }, orderBy: { createdAt: 'asc' } })).filter((m) => m.ref!.includes(ruleRef));
@@ -46,10 +52,10 @@ afterAll(async () => {
 
 describe('lifecycle admin', () => {
   it('installs the default playbook idempotently, manages staff and edits / switches off / adds / deletes levels', async () => {
-    expect((await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/install`, headers: await h('reviewer') })).statusCode).toBe(403);
-    const first = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/install`, headers: await h('support') });
+    expect((await app.inject({ method: 'POST', url: `/v1/lifecycle/install`, headers: await h('staff') })).statusCode).toBe(403);
+    const first = await app.inject({ method: 'POST', url: `/v1/lifecycle/install`, headers: await h() });
     expect(first.json().rulesAdded).toBeGreaterThanOrEqual(19);
-    const again = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/install`, headers: await h('support') });
+    const again = await app.inject({ method: 'POST', url: `/v1/lifecycle/install`, headers: await h() });
     expect(again.json()).toEqual({ rulesAdded: 0, levelsAdded: 0 });
 
     for (const [name, phone, roles, erpUser] of [
@@ -58,22 +64,22 @@ describe('lifecycle admin', () => {
       ['Esha', ESHA, ['onboarding'], 'esha@nextai.test'],
       ['Boss', MGMT, ['management'], null],
     ] as const) {
-      const r = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h('support'), payload: { name, phone, roles, erpUser } });
+      const r = await app.inject({ method: 'POST', url: `/v1/staff`, headers: await h(), payload: { name, phone, roles, erpUser } });
       expect(r.statusCode).toBe(200);
     }
-    const bad = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h('support'), payload: { name: 'X', phone: 'abc', roles: ['sales'] } });
+    const bad = await app.inject({ method: 'POST', url: `/v1/staff`, headers: await h(), payload: { name: 'X', phone: 'abc', roles: ['sales'] } });
     expect(bad.statusCode).toBe(400);
 
     // Switch off level 1 of "call within 1 hour", edit level 2, add and delete a level.
     const fc = await rule('lead.first_call');
     const l1 = fc.levels.find((l) => l.level === 1)!;
     const l2 = fc.levels.find((l) => l.level === 2)!;
-    expect((await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/levels/${l1.id}`, headers: await h('support'), payload: { enabled: false } })).statusCode).toBe(200);
-    await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/levels/${l2.id}`, headers: await h('support'), payload: { offsetMinutes: 55, message: 'Call {{lead_name}} now!' } });
-    const added = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/rules/${fc.id}/levels`, headers: await h('support'), payload: { offsetMinutes: 240, audience: 'management', message: 'Lead {{lead_name}} ignored for 4h' } });
+    expect((await app.inject({ method: 'PATCH', url: `/v1/lifecycle/levels/${l1.id}`, headers: await h(), payload: { enabled: false } })).statusCode).toBe(200);
+    await app.inject({ method: 'PATCH', url: `/v1/lifecycle/levels/${l2.id}`, headers: await h(), payload: { offsetMinutes: 55, message: 'Call {{lead_name}} now!' } });
+    const added = await app.inject({ method: 'POST', url: `/v1/lifecycle/rules/${fc.id}/levels`, headers: await h(), payload: { offsetMinutes: 240, audience: 'management', message: 'Lead {{lead_name}} ignored for 4h' } });
     expect(added.json().level).toBe(4);
-    const tmp = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/rules/${fc.id}/levels`, headers: await h('support'), payload: { offsetMinutes: 300, audience: 'owner', message: 'tmp' } });
-    expect((await app.inject({ method: 'DELETE', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/levels/${tmp.json().id}`, headers: await h('support') })).statusCode).toBe(200);
+    const tmp = await app.inject({ method: 'POST', url: `/v1/lifecycle/rules/${fc.id}/levels`, headers: await h(), payload: { offsetMinutes: 300, audience: 'owner', message: 'tmp' } });
+    expect((await app.inject({ method: 'DELETE', url: `/v1/lifecycle/levels/${tmp.json().id}`, headers: await h() })).statusCode).toBe(200);
 
     const after = await rule('lead.first_call');
     expect(after.levels.map((l) => [l.level, l.offsetMinutes, l.enabled])).toEqual([
@@ -89,7 +95,7 @@ describe('lifecycle admin', () => {
 
 describe('lead → reminders → escalation', () => {
   it('Leadvyne lead is created in ERPNext, assigned round-robin, reminded per level and escalated to the accountant', async () => {
-    const rot = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/lead-webhook-secret`, headers: await h('super_admin') });
+    const rot = await app.inject({ method: 'POST', url: `/v1/lifecycle/lead-webhook-secret`, headers: await h() });
     const secret = rot.json().secret as string;
     const body = JSON.stringify({ id: 'lv-1', name: 'Fatima Traders', phone: '9876543210', source: 'meta_ads', campaign: 'Nov promo' });
     const sig = (s: string) => 'sha256=' + createHmac('sha256', s).update(body).digest('hex');
@@ -153,10 +159,10 @@ describe('lead → reminders → escalation', () => {
 
     // Rule switched off from admin → the 24h-before reminders are not sent.
     const demo = await rule('demo.reminder');
-    await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/rules/${demo.id}`, headers: await h('support'), payload: { enabled: false } });
+    await app.inject({ method: 'PATCH', url: `/v1/lifecycle/rules/${demo.id}`, headers: await h(), payload: { enabled: false } });
     await scanTimers(c, new Date(inThreeDays.getTime() - 23 * 60 * MIN));
     expect((await timer('demo.reminder', 'EV-1'))!.sentLevels).toEqual([]);
-    await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/rules/${demo.id}`, headers: await h('support'), payload: { enabled: true } });
+    await app.inject({ method: 'PATCH', url: `/v1/lifecycle/rules/${demo.id}`, headers: await h(), payload: { enabled: true } });
     await scanTimers(c, new Date(inThreeDays.getTime() - 23 * 60 * MIN));
     expect((await timer('demo.reminder', 'EV-1'))!.sentLevels).toEqual([1, 2]);
   });
@@ -235,8 +241,8 @@ describe('customer replies on WhatsApp', () => {
 
   it('monthly update: the reply becomes a Task for the AI manager and closes the step', async () => {
     const erp = c.erps.get(A.tenant.id)!;
-    await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h('support'), payload: { name: 'AI Manager', phone: '+919800000005', roles: ['ai_manager'], erpUser: 'ai@nextai.test' } });
-    await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/staff`, headers: await h('support'), payload: { name: 'Akshay', phone: '+919800000006', roles: ['qa'], erpUser: 'akshay@nextai.test' } });
+    await app.inject({ method: 'POST', url: `/v1/staff`, headers: await h(), payload: { name: 'AI Manager', phone: '+919800000005', roles: ['ai_manager'], erpUser: 'ai@nextai.test' } });
+    await app.inject({ method: 'POST', url: `/v1/staff`, headers: await h(), payload: { name: 'Akshay', phone: '+919800000006', roles: ['qa'], erpUser: 'akshay@nextai.test' } });
     await erp.update('Project', project, { custom_stage: 'Live' });
     // 1st of next month, 10:00 IST (the tenant reminder hour).
     const d = new Date();
@@ -284,7 +290,7 @@ describe('customer replies on WhatsApp', () => {
   it('day-7 review computes the health score, writes it to the Project and alerts management below the threshold', async () => {
     const erp = c.erps.get(A.tenant.id)!;
     await handleLifecycleEvent(c, { tenantId: A.tenant.id, doctype: 'Project', name: project, event: 'on_update' });
-    const r = await app.inject({ method: 'PATCH', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/settings`, headers: await h('support'), payload: { healthThreshold: 95 } });
+    const r = await app.inject({ method: 'PATCH', url: `/v1/lifecycle/settings`, headers: await h(), payload: { healthThreshold: 95 } });
     expect(r.json().healthThreshold).toBe(95);
     const t = (await timer('review.day7', project))!;
     await scanTimers(c, new Date(t.anchorAt.getTime() + 7 * 1440 * MIN + MIN));
@@ -311,7 +317,7 @@ describe('staff digest and report', () => {
   });
 
   it('reports the funnel, lead sources, stages and owners', async () => {
-    const r = (await app.inject({ method: 'GET', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/report?days=30`, headers: await h('reviewer') })).json();
+    const r = (await app.inject({ method: 'GET', url: `/v1/lifecycle/report?days=30`, headers: await h('accountant') })).json();
     expect(r.funnel[0]).toMatchObject({ key: 'lead.assign', count: 1 });
     expect(r.funnel.find((f: { key: string }) => f.key === 'handover.project').count).toBe(2);
     expect(r.sources).toEqual({ Advertisement: 1 });
@@ -323,7 +329,7 @@ describe('staff digest and report', () => {
 describe('leadvyne payload variants', () => {
   it('accepts nested / aliased fields and the ?token= form', async () => {
     expect(normalizeLeadPayload({ lead: { full_name: 'Sara', mobile: '0501234567', lead_source: 'whatsapp', leadgen_id: 77 } })).toMatchObject({ id: '77', name: 'Sara', phone: '0501234567', source: 'whatsapp' });
-    const rot = await app.inject({ method: 'POST', url: `/admin/v1/tenants/${A.tenant.id}/lifecycle/lead-webhook-secret`, headers: await h('super_admin') });
+    const rot = await app.inject({ method: 'POST', url: `/v1/lifecycle/lead-webhook-secret`, headers: await h() });
     const r = await app.inject({
       method: 'POST',
       url: `/webhooks/leadvyne/${A.tenant.slug}?token=${encodeURIComponent(rot.json().secret)}`,

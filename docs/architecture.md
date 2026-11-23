@@ -86,7 +86,8 @@ After the first payment, an onboarding Project is created from the *Onboarding T
 A separate staff WhatsApp number (its own Chatwoot inbox, `tenants.cw_staff_inbox_id`) routes team messages to the office
 assistant: check-in/out, stand-ups, tasks, leave, approvals, announcements and meetings. `office.tick` runs the day
 (nudges, end of day, AI team summary, meeting reminders, weekly report). All staff notifications go out from this number.
-Admin → Office shows the live floor. See [virtual-office.md](virtual-office.md).
+The business owner runs it in the app under Team → Office (live floor) and Team → Sales pipeline;
+only the staff number's inbox is connected by NextAi support in the admin console. See [virtual-office.md](virtual-office.md).
 
 ## Auth
 

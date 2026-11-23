@@ -17,7 +17,7 @@ ERPNext sites are never touched.
 | When the onboarding Project is created | After the **first payment** (Payment Entry, Receive, from a Customer with no Project yet) |
 | Escalation manager | **Accountant** by default (configurable per rule). If the owner *is* the accountant, the escalation goes to management |
 | Renewal source of truth | ERPNext **Subscription** (`end_date`, falling back to `current_invoice_end`) |
-| Reminder configuration | Per tenant in **Admin → Lifecycle**: every rule and every level can be switched on/off, re-timed, re-targeted, reworded, added or deleted |
+| Reminder configuration | Per business, by its owner, in the business app under **Team → Sales pipeline**: every rule and every level can be switched on/off, re-timed, re-targeted, reworded, added or deleted |
 
 ## Model
 
@@ -91,7 +91,7 @@ reaches customers inside the 24 h window.
 
 ## NextAi admin setup
 
-**Admin → Lifecycle**, then pick the tenant:
+Business app → **Team → Sales pipeline** (owner; the accountant can view):
 
 1. **Rules → Install default 19-stage playbook.**
 2. **Staff:** add each person with their WhatsApp number, ERPNext user and roles. For example:
@@ -144,7 +144,7 @@ At the tenant's digest hour (default 09:00 local), each active staff member gets
 🔴 escalated, 🟠 reminded but still open, 🟡 coming up in the next 24 hours. It is sent once per day, and only to people who
 have something on the list. Template key: `lifecycle_digest` (one `message` param).
 
-## Report (Admin → Lifecycle → Report)
+## Report (Team → Sales pipeline → Report)
 
 For the last 7 / 30 / 90 / 365 days:
 
@@ -154,7 +154,7 @@ For the last 7 / 30 / 90 / 365 days:
 - **People:** open, escalated and done per owner.
 - **Stages:** started, done, cancelled, open and escalation rate per stage.
 
-## Settings (Admin → Lifecycle → Setup)
+## Settings (Team → Sales pipeline → Setup)
 
 | Setting | Default |
 |---|---|
