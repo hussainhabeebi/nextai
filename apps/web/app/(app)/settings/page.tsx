@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, UserPlus } from 'lucide-react';
+import { Check, MessageCircle, UserPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { APP_STYLES, APP_VIEWS, type Language, type TenantSettings } from '@nextai/shared';
 import { Page } from '@/components/page';
@@ -15,7 +15,8 @@ import { cn } from '@/lib/cn';
 import { STYLES, VIEWS } from '@/lib/views';
 
 type SettingsDto = { name: string; country: string; currency: string; language: Language; settings: TenantSettings };
-type Member = { id: string; name: string; phone: string; role: string; status: string };
+type Member = { id: string; name: string; phone: string; email?: string | null; role: string; status: string };
+type Invite = { text: string; whatsappLink: string; sentByNextAi?: boolean };
 
 export default function SettingsPage() {
   const { setLang } = useI18n();
@@ -25,7 +26,8 @@ export default function SettingsPage() {
   const team = useApi<{ items: Member[] }>('/v1/team');
   const [form, setForm] = useState<SettingsDto | null>(null);
   const [msg, setMsg] = useState('');
-  const [invite, setInvite] = useState({ name: '', phone: '', role: 'staff' });
+  const [invite, setInvite] = useState({ name: '', phone: '', email: '', role: 'staff' });
+  const [shareFor, setShareFor] = useState<{ name: string; invite: Invite } | null>(null);
   useEffect(() => setForm(data ?? null), [data]);
 
   const save = async () => {
@@ -43,6 +45,7 @@ export default function SettingsPage() {
           bank: form.settings.bank,
           reminders: form.settings.reminders,
           dailySummary: form.settings.dailySummary,
+          whatsappNumber: form.settings.whatsappNumber || undefined,
           taxRegime: form.settings.taxRegime,
           taxCalendar: form.settings.taxCalendar,
           appView: form.settings.appView,
@@ -58,13 +61,15 @@ export default function SettingsPage() {
   };
   const addMember = async () => {
     try {
-      await api.post('/v1/team', invite);
-      setInvite({ name: '', phone: '', role: 'staff' });
+      const m = await api.post<Member & { invite: Invite }>('/v1/team', { ...invite, email: invite.email || undefined });
+      setShareFor({ name: m.name, invite: m.invite });
+      setInvite({ name: '', phone: '', email: '', role: 'staff' });
       await team.reload();
     } catch (e) {
       setMsg((e as ApiError).message);
     }
   };
+  const showInvite = async (m: Member) => setShareFor({ name: m.name, invite: await api.get<Invite>(`/v1/team/${m.id}/invite`) });
 
   if (!form) return <Page title="Settings" back="/more"><Skeleton className="h-96" /></Page>;
   const s = form.settings;
@@ -126,6 +131,9 @@ export default function SettingsPage() {
           <h2 className="font-semibold">Business profile</h2>
           <Field label="Business name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label={form.country === 'IN' ? 'GSTIN' : 'TRN'}><Input value={s.taxId ?? ''} onChange={(e) => set({ taxId: e.target.value.toUpperCase() })} /></Field>
+          <Field label="NextAi WhatsApp number" hint="The number your team sends bills to. Shown in staff invites.">
+            <Input inputMode="tel" value={s.whatsappNumber ?? ''} placeholder="+91 …" onChange={(e) => set({ whatsappNumber: e.target.value })} />
+          </Field>
           <Field label="Language">
             <Select value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value as Language })}>
               <option value="en">English</option>
@@ -216,9 +224,17 @@ export default function SettingsPage() {
         <h2 className="font-semibold">Team</h2>
         <ul className="divide-y divide-line text-sm">
           {team.data?.items.map((m) => (
-            <li key={m.id} className="flex items-center justify-between py-2">
-              <span>{m.name} <span className="text-muted">{m.phone}</span></span>
-              <Badge tone={m.status === 'active' ? 'green' : m.status === 'disabled' ? 'red' : 'amber'}>{m.role?.replace('_', ' ')}</Badge>
+            <li key={m.id} className="flex items-center justify-between gap-2 py-2">
+              <span className="min-w-0">
+                {m.name} <span className="text-muted">{m.phone}</span>
+                {m.status === 'invited' && <span className="block text-xs text-muted">Invited: hasn&apos;t logged in or messaged yet</span>}
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                {isOwner && m.status === 'invited' && (
+                  <Button variant="ghost" onClick={() => void showInvite(m)}>Invite</Button>
+                )}
+                <Badge tone={m.status === 'active' ? 'green' : m.status === 'disabled' ? 'red' : 'amber'}>{m.role === 'tenant_accountant' ? 'accountant' : m.role}</Badge>
+              </span>
             </li>
           ))}
         </ul>
@@ -226,6 +242,7 @@ export default function SettingsPage() {
           <div className="space-y-2 border-t border-line pt-3">
             <Input placeholder="Name" value={invite.name} onChange={(e) => setInvite({ ...invite, name: e.target.value })} />
             <Input placeholder="WhatsApp number" inputMode="tel" value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value })} />
+            <Input placeholder="Email (optional: for login codes until WhatsApp is connected)" type="email" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} />
             <Select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value })}>
               <option value="staff">Staff</option>
               <option value="tenant_accountant">Accountant</option>
@@ -233,6 +250,17 @@ export default function SettingsPage() {
             <Button variant="secondary" onClick={() => void addMember()} disabled={!invite.name || invite.phone.length < 8}>
               <UserPlus className="h-4 w-4" /> Add member
             </Button>
+          </div>
+        )}
+        {shareFor && (
+          <div className="space-y-2 rounded-xl bg-brand-light p-3 text-sm text-brand-dark" role="status">
+            <p className="font-semibold">
+              {shareFor.invite.sentByNextAi ? `Invite sent to ${shareFor.name} on WhatsApp ✅` : `Send ${shareFor.name} their invite from your WhatsApp:`}
+            </p>
+            <p className="whitespace-pre-line">{shareFor.invite.text}</p>
+            <a href={shareFor.invite.whatsappLink} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand px-4 font-medium text-white">
+              <MessageCircle className="h-4 w-4" /> Send on WhatsApp
+            </a>
           </div>
         )}
       </Card>

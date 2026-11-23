@@ -37,6 +37,8 @@ const codeForm=$<HTMLFormElement>('#code-form');
 const code=$<HTMLInputElement>('#code');
 const verifyURL=form.dataset.endpoint!.replace(/\/+$/,'')+'/verify';
 let signupId='';
+// "Anil 98765 43210" / "Rasheed - 050 123 4567" per line → [{name, phone}] (numbers without a + use the dial code).
+const teamList=()=>{const lines=($<HTMLTextAreaElement>('#team').value||'').split(/\n|;/).map(l=>l.trim()).filter(Boolean);const out=lines.map(l=>{const em=l.match(/[\w.+-]+@[\w-]+(\.[\w-]+)+/)?.[0];const rest=em?l.replace(em,' '):l;const m=rest.match(/(\+?[\d][\d\s-]{7,})/);if(!m)return null;const raw=m[1]!.replace(/[\s-]/g,'');const nm=rest.replace(m[1]!,'').replace(/[-,:]+/g,' ').replace(/\s+/g,' ').trim()||'Staff';return {name:nm.slice(0,80),phone:raw.startsWith('+')?raw:`+${dial.value}${raw.replace(/^0+/,'')}`,...(em?{email:em.toLowerCase()}:{})};}).filter(Boolean).slice(0,9);return out.length?out:undefined;};
 const planOf=(p:string)=>['base','growth','pro'].includes(p)?p:undefined;
 const errorText=async(r:Response)=>{try{const j=await r.json();return typeof j?.message==='string'?j.message:''}catch{return''}};
 form.addEventListener('submit',async e=>{
@@ -55,7 +57,7 @@ form.addEventListener('submit',async e=>{
  const submit=form.querySelector<HTMLButtonElement>('[type="submit"]')!;inFlight=true;submit.disabled=true;submit.textContent='Sending your code…';status.textContent='';status.className='';track('signup_submit',{country:country.value,language:language.value,plan:chosenPlan});
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
  try{
-  const response=await fetch(form.dataset.endpoint!,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessName:name,ownerName,email:mail,phone:`+${dial.value}${digits}`,country:country.value,language:language.value,plan:planOf(chosenPlan),utm,website:website.value||undefined}),signal:controller.signal});
+  const response=await fetch(form.dataset.endpoint!,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessName:name,ownerName,email:mail,phone:`+${dial.value}${digits}`,country:country.value,language:language.value,plan:planOf(chosenPlan),team:teamList(),utm,website:website.value||undefined}),signal:controller.signal});
   if(!response.ok){const msg=await errorText(response);throw new Error(msg||'signup failed');}
   const body=await response.json() as {signupId:string;devCode?:string};
   signupId=body.signupId;form.hidden=true;codeForm.hidden=false;if(body.devCode)code.value=body.devCode;

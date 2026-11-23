@@ -1,5 +1,5 @@
 import { parseChoice } from '@nextai/chatwoot-client';
-import { QUEUES, formatMoney, t, type Currency, type DraftPayload, type IntentResult } from '@nextai/shared';
+import { QUEUES, formatMoney, t, type Currency, type DraftPayload, type IntentResult, type ReportKey } from '@nextai/shared';
 import { ruleClassify } from '../../ai/index.js';
 import { DATE_RE, KIND_CHOICES, cleanName, normalizeKind, parseDate } from '../../ai/rules.js';
 import { ErpError } from '@nextai/erpnext-client';
@@ -14,7 +14,9 @@ import { chooseExpenseAccount } from '../erpnext/expense-account.js';
 import { GroupNotFound, KIND_LABEL, createLedger, createParty, isPartyKind, ledgerTarget } from '../erpnext/create-account.js';
 import { createEmployee, normalizeGender } from '../erpnext/create-employee.js';
 import { NEW_PARTY, partyChoices, partyQuestion, resolveParty, type PartyKind, type PartyResolution } from '../parties/resolve.js';
-import { booksContext, reportSummary } from '../reports/reports.js';
+import { booksContext } from '../reports/reports.js';
+import { answerQuestion, reportText } from '../reports/answers.js';
+import { parseQuestion } from '../../ai/question.js';
 import { incrementUsage } from '../usage/usage.js';
 import { buildBriefing } from '../briefing/briefing.js';
 import { answerBankLine, askNextBankLine, importLines, linkDraftToBankLine, matchLines, tenantToday } from '../banking/service.js';
@@ -201,7 +203,7 @@ async function applyEditAndResend(ctx: BotContext, draftId: string, patch: Parti
 }
 
 async function classify(ctx: BotContext, text: string): Promise<IntentResult> {
-  const rule = ruleClassify(text);
+  const rule = ruleClassify(text, { today: tenantToday(ctx.tenant), country: ctx.tenant.country });
   if (rule && rule.confidence >= 0.8) return rule;
   try {
     const { result, usage } = await ctx.c.ai.llm.classify(text, {
@@ -526,13 +528,17 @@ export async function runIntent(ctx: BotContext, rawIntent: IntentResult, opts: 
       return;
     }
     case 'request_report': {
-      const text = await reportSummary(c, tenant, (e.report as never) ?? 'profit_and_loss');
-      await say(ctx, text);
+      await say(ctx, await reportText(c, tenant, (e.report as ReportKey | undefined) ?? 'profit_and_loss', e.question ?? ''));
       return;
     }
     case 'ask_books': {
+      // Exact answers straight from ERPNext for everything we can recognise; the AI only for the rest.
+      const question = e.question ?? '';
+      const q = parseQuestion(question, tenantToday(tenant), tenant.country);
+      if (q) return say(ctx, await answerQuestion(c, tenant, q));
+      if (c.ai.llm.name === 'mock') return say(ctx, ASK_EXAMPLES);
       const context = await booksContext(c, tenant);
-      const { text, usage } = await c.ai.llm.answer(e.question ?? '', context, ctx.lang);
+      const { text, usage } = await c.ai.llm.answer(question, context, ctx.lang);
       await incrementUsage(c.prisma, tenant.id, { aiTokens: usage.tokens, aiCostMicros: usage.costMicros });
       await say(ctx, text);
       return;
@@ -565,5 +571,18 @@ export async function runIntent(ctx: BotContext, rawIntent: IntentResult, opts: 
     }
   }
 }
+
+const ASK_EXAMPLES = [
+  'I can answer questions about your books, for example:',
+  '• "Sales today" / "sales last month"',
+  '• "Expenses this month" / "what did I spend on fuel"',
+  '• "Profit this year"',
+  '• "Who owes me?" / "Ravi balance"',
+  '• "How much do I owe suppliers?"',
+  '• "Cash and bank balance"',
+  '• "Payments received this week"',
+  '• "Top customers this month"',
+  '• "Unpaid invoices" / "GST due"',
+].join('\n');
 
 export const formatTotal = (n: number, cur: Currency) => formatMoney(n, cur);

@@ -67,7 +67,7 @@ export function periodsFor(key: PeriodKey, country: 'IN' | 'AE', now = new Date(
   }
 }
 
-type GlSum = { account: string; debit: number; credit: number };
+export type GlSum = { account: string; debit: number; credit: number };
 type GlMonth = GlSum & { month: string };
 type PartySum = { party: string; total: number; n: number };
 type Row = Record<string, unknown>;
@@ -77,7 +77,7 @@ const round = (v: number) => Math.round(v * 100) / 100;
 const PAGE = 1000;
 const MAX_ROWS = 200_000;
 /** Every matching row, page by page (stable order so pages don't overlap). Refuses rather than total a partial set. */
-async function listAll<T>(erp: ErpClient, doctype: string, opts: Omit<ListOptions, 'limit' | 'start' | 'orderBy'>): Promise<T[]> {
+export async function listAll<T>(erp: ErpClient, doctype: string, opts: Omit<ListOptions, 'limit' | 'start' | 'orderBy'>): Promise<T[]> {
   const out: T[] = [];
   for (let start = 0; ; start += PAGE) {
     const page = await erp.list<T>(doctype, { ...opts, orderBy: 'name asc', limit: PAGE, start });
@@ -87,11 +87,11 @@ async function listAll<T>(erp: ErpClient, doctype: string, opts: Omit<ListOption
   }
 }
 
-type GlRow = { account: string; debit: unknown; credit: unknown; posting_date?: string };
+export type GlRow = { account: string; debit: unknown; credit: unknown; posting_date?: string };
 /** Debit and credit per account (or per month + account when `byMonth`). */
-function sumGl(rows: GlRow[]): GlSum[];
-function sumGl(rows: GlRow[], byMonth: true): GlMonth[];
-function sumGl(rows: GlRow[], byMonth = false): Array<GlSum & { month?: string }> {
+export function sumGl(rows: GlRow[]): GlSum[];
+export function sumGl(rows: GlRow[], byMonth: true): GlMonth[];
+export function sumGl(rows: GlRow[], byMonth = false): Array<GlSum & { month?: string }> {
   const groups = new Map<string, GlSum & { month?: string }>();
   for (const r of rows) {
     const month = byMonth ? String(r.posting_date ?? '').slice(0, 7) : undefined;
@@ -206,7 +206,7 @@ export interface Ageing {
 
 const short = (account: string) => account.replace(/\s+-\s+[^-]+$/, '');
 
-function byRoot(rows: GlSum[], types: Map<string, ChartEntry>) {
+export function byRoot(rows: GlSum[], types: Map<string, ChartEntry>) {
   const income = new Map<string, number>();
   const expense = new Map<string, number>();
   let tax = 0;
@@ -222,7 +222,7 @@ function byRoot(rows: GlSum[], types: Map<string, ChartEntry>) {
 
 const BUCKETS: Array<[string, string]> = [['range1', '0–30 days'], ['range2', '31–60 days'], ['range3', '61–90 days'], ['range4', '91–120 days'], ['range5', '120+ days']];
 
-function ageing(r: ReportResult | null, today: string): Ageing {
+export function ageing(r: ReportResult | null, today: string): Ageing {
   const rows = ((r?.result ?? []) as Row[]).filter((x) => x && typeof x === 'object' && x.party && num(x.outstanding) !== 0);
   const buckets = BUCKETS.map(([k, label]) => ({ label, amount: round(rows.reduce((s, x) => s + num(x[k]), 0)) }));
   const parties = new Map<string, { outstanding: number; overdue: number; oldestDays: number }>();

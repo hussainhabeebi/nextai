@@ -53,6 +53,11 @@ export async function handleIncoming(c: Container, tenant: Tenant, evt: Chatwoot
 
   await incrementUsage(c.prisma, tenant.id, { messages: 1 });
   const ulang = (user.language as Language) ?? lang;
+  if (user.status === 'invited') {
+    // A staff member's first message: they're in. A short welcome, then their message is handled as usual.
+    await db.user.update({ where: { id: user.id }, data: { status: 'active' } });
+    await cw.sendText(conversationId, t(ulang, 'bot.welcome', { name: user.name.split(' ')[0] ?? user.name }) + `\nYou're set up for ${tenant.name}${user.role === 'staff' ? ' as staff' : user.role === 'tenant_accountant' ? ' as the accountant' : ''}.`);
+  }
 
   if (tenant.status === 'suspended') {
     await cw.sendText(conversationId, t(ulang, 'billing.suspended', { link: `${env().APP_URL}/billing` }));

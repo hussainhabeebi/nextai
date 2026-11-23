@@ -47,5 +47,6 @@ export const DEFAULT_TEMPLATES = [
   // Until then messages use the approved template above (and include the link whenever plain text is allowed).
   { key: 'invoice_pay', name: 'nextai_invoice_pay', language: 'en', params: ['party', 'business', 'invoice_no', 'amount', 'due_date', 'pay_link'], category: 'UTILITY', approved: false },
   { key: 'reminder_pay', name: 'nextai_payment_reminder_pay', language: 'en', params: ['party', 'business', 'amount', 'invoice_no', 'due_date', 'pay_link'], category: 'UTILITY', approved: false },
+  { key: 'staff_invite', name: 'nextai_staff_invite', language: 'en', params: ['name', 'business', 'app_link'], category: 'UTILITY', approved: false },
   { key: 'tax_deadline', name: 'nextai_tax_deadline', language: 'en', params: ['business', 'what', 'due_date', 'days_left'], category: 'UTILITY', approved: false },
 ];

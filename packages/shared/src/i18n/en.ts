@@ -47,7 +47,7 @@ export const en = {
   'bot.editPrompt': 'What should I change? e.g. "amount 1200" or "supplier ABC Traders"',
   'bot.missingField': 'Please tell me the {field}.',
   'bot.help':
-    'You can:\n• Send a bill photo/PDF\n• "Sold 5000 to Ravi"\n• "Received 2000 from Ravi"\n• "Paid 8000 to AM Motors"\n• "Paid rent 15000"\n• "Bought goods 12000 from AM Motors"\n• "Ravi returned goods 1500"\n• "Deposited 10000 cash in bank"\n• "Add supplier AM Motors"\n• "Create expense account Fuel"\n• "Create capital account Hussain"\n• "Create employee Sona C"\n• "Briefing" (today at a glance)\n• Forward a bank SMS or send a statement; "bank" to sort it\n• "Report P&L"\n• "How much do customers owe me?"',
+    'You can:\n• Send a bill photo/PDF\n• "Sold 5000 to Ravi"\n• "Received 2000 from Ravi"\n• "Paid 8000 to AM Motors"\n• "Paid rent 15000"\n• "Bought goods 12000 from AM Motors"\n• "Ravi returned goods 1500"\n• "Deposited 10000 cash in bank"\n• "Add supplier AM Motors"\n• "Create expense account Fuel"\n• "Create capital account Hussain"\n• "Create employee Sona C"\n• "Briefing" (today at a glance)\n• Forward a bank SMS or send a statement; "bank" to sort it\n• "Sales today" · "Expenses this month" · "Profit this year"\n• "Cash balance" · "Who owes me?" · "Ravi balance"\n• "Report P&L" · "Balance sheet" · "Cash flow"',
   'bot.error': 'Sorry, something went wrong. We are looking into it.',
   'bot.reportReady': 'Here is your {report}.',
   'bot.reminder': 'Hi {party}, a friendly reminder that {amount} is due for invoice {ref}. Thank you!',

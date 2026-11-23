@@ -23,6 +23,11 @@ export const signupRequestSchema = z.object({
   language: z.enum(LANGUAGES).default('en'),
   plan: z.enum(PLAN_CODES).optional(),
   utm: z.record(z.string(), z.string().max(200)).optional(),
+  /** Staff/accountant WhatsApp numbers to add straight away (they can log in and use the bot). */
+  team: z
+    .array(z.object({ name: z.string().trim().min(1).max(80), phone: z.string().trim().min(8).max(20), email: z.string().trim().toLowerCase().email().max(200).optional(), role: z.enum(['staff', 'tenant_accountant']).default('staff') }))
+    .max(9)
+    .optional(),
   /** Honeypot: humans never see or fill this field. */
   website: z.string().max(200).optional(),
 });
@@ -115,13 +120,14 @@ export async function verifySignup(c: Container, signupId: string, code: string,
     ownerEmail: p.req.email,
   };
   const { tenant, ownerId } = await createTenantRecord(c.prisma, create);
+  const team = await addSignupTeam(c, tenant, p.req.team ?? [], p.phone);
   await withSystemTx(c.prisma, (tx) =>
     tx.tenant.update({
       where: { id: tenant.id },
       data: { settings: { ...(tenant.settings as object), signup: { at: new Date().toISOString(), utm: p.req.utm ?? {}, source: 'website' } } },
     }),
   );
-  await audit(c.prisma, { tenantId: tenant.id, actorId: ownerId, actorType: 'user', channel: 'app', action: 'tenant.signup', entity: 'tenant', entityId: tenant.id, after: { name: tenant.name, slug, plan: create.planCode, country: create.country }, ip });
+  await audit(c.prisma, { tenantId: tenant.id, actorId: ownerId, actorType: 'user', channel: 'app', action: 'tenant.signup', entity: 'tenant', entityId: tenant.id, after: { name: tenant.name, slug, plan: create.planCode, country: create.country, team: team.length }, ip });
   if (signupErpMode() === 'site') await markSiteQueued(c, tenant.id); // the app shows "setting up your books" until ready
   await c.queue.enqueue(QUEUES.tenantSetup, { tenantId: tenant.id }, { jobId: `setup-${tenant.id}` });
 
@@ -130,6 +136,29 @@ export async function verifySignup(c: Container, signupId: string, code: string,
   const loginUrl = `${env().APP_URL.replace(/\/+$/, '')}/login#t=${token}`;
   await notify(c, tenant.id, create).catch((err) => logger.warn({ err: (err as Error).message }, 'signup notification failed'));
   return { tenantId: tenant.id, loginUrl };
+}
+
+/**
+ * Staff numbers given at signup: added as invited members (within the plan's user limit, owner included), so
+ * they can log in with an OTP and use the bot straight away. The owner sends them the invite from Settings → Team.
+ */
+async function addSignupTeam(c: Container, tenant: { id: string; country: 'IN' | 'AE'; planId: string | null }, team: NonNullable<SignupRequest['team']>, ownerPhone: string) {
+  if (!team.length) return [];
+  return withSystemTx(c.prisma, async (tx) => {
+    const plan = tenant.planId ? await tx.plan.findUnique({ where: { id: tenant.planId } }) : null;
+    const maxUsers = (plan?.limits as { users?: number } | null)?.users ?? 1;
+    const seen = new Set([ownerPhone]);
+    const added: Array<{ id: string; name: string; phone: string }> = [];
+    for (const m of team) {
+      if (added.length + 1 >= maxUsers) break;
+      const phone = normalizePhone(m.phone, tenant.country);
+      if (seen.has(phone) || phone.replace(/\D/g, '').length < 9) continue;
+      seen.add(phone);
+      const u = await tx.user.create({ data: { tenantId: tenant.id, name: m.name, phone, email: m.email, role: m.role, status: 'invited' } });
+      added.push({ id: u.id, name: u.name, phone });
+    }
+    return added;
+  });
 }
 
 /** One-time "open the app" token from signup → owner user id (single use). */
