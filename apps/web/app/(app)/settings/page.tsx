@@ -41,6 +41,9 @@ export default function SettingsPage() {
           bank: form.settings.bank,
           reminders: form.settings.reminders,
           dailySummary: form.settings.dailySummary,
+          address: form.settings.address,
+          eInvoicing: { enabled: form.settings.eInvoicing.enabled, autoSubmit: form.settings.eInvoicing.autoSubmit, peppolId: form.settings.eInvoicing.peppolId || undefined },
+          forecast: { minCashBuffer: form.settings.forecast.minCashBuffer },
         },
       });
       setLang(form.language);
@@ -85,6 +88,35 @@ export default function SettingsPage() {
           <Input placeholder="Bank name" value={s.bank?.name ?? ''} onChange={(e) => set({ bank: { ...s.bank, name: e.target.value } })} />
           <Input placeholder="Account number" value={s.bank?.accountNo ?? ''} onChange={(e) => set({ bank: { ...s.bank, accountNo: e.target.value } })} />
           <Input placeholder={form.country === 'IN' ? 'IFSC' : 'IBAN'} value={s.bank?.ifscOrIban ?? ''} onChange={(e) => set({ bank: { ...s.bank, ifscOrIban: e.target.value } })} />
+        </Card>
+        <Card className="space-y-3">
+          <h2 className="font-semibold">Business address (printed on e-invoices)</h2>
+          <Input placeholder="Address line 1" value={s.address.line1 ?? ''} onChange={(e) => set({ address: { ...s.address, line1: e.target.value } })} />
+          <Input placeholder="Address line 2" value={s.address.line2 ?? ''} onChange={(e) => set({ address: { ...s.address, line2: e.target.value } })} />
+          <div className="grid grid-cols-3 gap-2">
+            <Input placeholder="City" value={s.address.city ?? ''} onChange={(e) => set({ address: { ...s.address, city: e.target.value } })} />
+            <Input placeholder={form.country === 'IN' ? 'PIN code' : 'PO Box'} inputMode="numeric" value={s.address.postalCode ?? ''} onChange={(e) => set({ address: { ...s.address, postalCode: e.target.value } })} />
+            <Input placeholder={form.country === 'IN' ? 'State code (32)' : 'Emirate (DU)'} value={s.address.stateCode ?? ''} onChange={(e) => set({ address: { ...s.address, stateCode: e.target.value.toUpperCase() } })} />
+          </div>
+        </Card>
+        <Card className="space-y-3">
+          <h2 className="font-semibold">E-invoicing</h2>
+          <p className="text-sm text-muted">
+            {form.country === 'IN' ? 'Register B2B invoices on the GST IRP (IRN + signed QR) before they go to the customer.' : 'Send invoices as Peppol PINT AE e-invoices under the FTA e-invoicing system.'}
+          </p>
+          <Toggle label="Turn on e-invoicing" checked={s.eInvoicing.enabled} onChange={(v) => set({ eInvoicing: { ...s.eInvoicing, enabled: v } })} />
+          <Toggle label="Submit automatically when an invoice is posted" checked={s.eInvoicing.autoSubmit} onChange={(v) => set({ eInvoicing: { ...s.eInvoicing, autoSubmit: v } })} />
+          {form.country === 'AE' && (
+            <Field label="Peppol participant ID" hint="Issued by your access point, e.g. 0235:100123456700003">
+              <Input value={s.eInvoicing.peppolId ?? ''} onChange={(e) => set({ eInvoicing: { ...s.eInvoicing, peppolId: e.target.value } })} />
+            </Field>
+          )}
+        </Card>
+        <Card className="space-y-3">
+          <h2 className="font-semibold">Cash forecast</h2>
+          <Field label="Minimum cash buffer" hint="We alert you when the forecast dips below this.">
+            <Input inputMode="decimal" value={String(s.forecast.minCashBuffer ?? 0)} onChange={(e) => set({ forecast: { ...s.forecast, minCashBuffer: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 } })} />
+          </Field>
         </Card>
         <Card className="space-y-3">
           <h2 className="font-semibold">Automation</h2>

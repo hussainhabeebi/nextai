@@ -25,6 +25,9 @@ export const TENANT_MODELS = new Set<string>([
   'OutboundMessage',
   'PushSubscription',
   'WebhookEvent',
+  'AuditRun',
+  'AuditFinding',
+  'EInvoice',
 ]);
 
 const WHERE_OPS = new Set([

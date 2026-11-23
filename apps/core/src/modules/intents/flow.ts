@@ -7,6 +7,8 @@ import type { BotContext } from '../chatwoot/context.js';
 import { say } from '../chatwoot/context.js';
 import { CHOICES, cancelDraft, confirmDraft, createDraft, getDraft, parseEdit, summaryText, updateDraftPayload } from '../drafts/service.js';
 import { erpContext, guessExpenseAccount } from '../erpnext/mappers.js';
+import { hasFeature } from '../billing/gating.js';
+import { forecastSummary } from '../forecast/service.js';
 import { booksContext, reportSummary } from '../reports/reports.js';
 import { incrementUsage } from '../usage/usage.js';
 
@@ -176,7 +178,12 @@ export async function runIntent(ctx: BotContext, intent: IntentResult): Promise<
       return;
     }
     case 'request_report': {
-      const text = await reportSummary(c, tenant, (e.report as never) ?? 'profit_and_loss');
+      const text =
+        e.report === 'cash_forecast'
+          ? (await hasFeature(c, tenant, 'cash_forecast'))
+            ? await forecastSummary(c, tenant)
+            : 'Cash forecasting is part of the Growth and Pro plans. Upgrade in the NextAi app → Billing.'
+          : await reportSummary(c, tenant, (e.report as never) ?? 'profit_and_loss');
       await say(ctx, text);
       return;
     }

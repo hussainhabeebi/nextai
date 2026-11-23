@@ -8,6 +8,9 @@
   --fg: 17 24 22;
   --muted: 100 112 108;
   --line: 226 232 230;
+  /* chart series (validated: light surface) */
+  --chart-1: #0b8a78;
+  --chart-2: #c2410c;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -17,6 +20,9 @@
     --fg: 236 242 240;
     --muted: 150 164 160;
     --line: 42 54 51;
+    /* chart series (validated: dark surface #141c1a) */
+    --chart-1: #22a592;
+    --chart-2: #e0702b;
     color-scheme: dark;
   }
 }

@@ -1,4 +1,4 @@
-import { QUEUES, REPORT_NAMES, draftPayloadSchema, draftStatusSchema, normalizePhone, tenantSettingsSchema, type Currency, type DraftPayload, type ReportKey } from '@nextai/shared';
+import { QUEUES, REPORT_NAMES, auditPolicySchema, draftPayloadSchema, eInvoicingSettingsSchema, forecastSettingsSchema, draftStatusSchema, normalizePhone, tenantSettingsSchema, type Currency, type DraftPayload, type ReportKey } from '@nextai/shared';
 import type { Prisma } from '@prisma/client';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -13,6 +13,8 @@ import { booksContext, runReport, totalOutstanding } from '../../modules/reports
 import { incrementUsage } from '../../modules/usage/usage.js';
 import { tenantKey } from '../../storage/storage.js';
 import { assertWithinLimit, requireFeature } from '../../modules/billing/gating.js';
+import { eInvoiceSummary } from '../../modules/einvoice/service.js';
+import { cachedForecast } from '../../modules/forecast/service.js';
 
 const actorOf = (req: FastifyRequest) => ({ id: req.user!.sub, type: 'user' as const, channel: 'app' as const, ip: req.ip });
 const requireOwner = (req: FastifyRequest) => {
@@ -61,6 +63,16 @@ export const appRoutes =
       const alerts: Array<{ kind: string; text: string }> = [];
       if (t.status === 'past_due') alerts.push({ kind: 'billing', text: 'Payment failed — update your card.' });
       if (pending) alerts.push({ kind: 'approvals', text: `${pending} item(s) need your approval.` });
+      // cheap signals only: cached forecast (no ERPNext call), DB counts
+      const [forecastNow, riskyFindings, einvoiceIssues] = await Promise.all([
+        safe(() => cachedForecast(c, t), undefined),
+        req.db!.auditFinding.count({ where: { status: 'open', severity: { in: ['high', 'critical'] } } }),
+        req.db!.eInvoice.count({ where: { status: { in: ['invalid', 'rejected', 'failed'] } } }),
+      ]);
+      if (forecastNow?.cashOutWeek) alerts.push({ kind: 'cash', text: `Cash may run out the week of ${forecastNow.cashOutWeek}. Open Cash forecast.` });
+      else if (forecastNow?.belowBufferWeek) alerts.push({ kind: 'cash', text: `Cash dips below your buffer the week of ${forecastNow.belowBufferWeek}.` });
+      if (riskyFindings) alerts.push({ kind: 'audit', text: `${riskyFindings} high-risk audit finding(s) to review.` });
+      if (einvoiceIssues) alerts.push({ kind: 'einvoice', text: `${einvoiceIssues} e-invoice(s) need attention before they can be issued.` });
       return {
         currency: t.currency as Currency,
         cash: bal.cash,
@@ -279,7 +291,7 @@ export const appRoutes =
         t.country === 'IN'
           ? [{ name: 'GSTR-1', day: 11 }, { name: 'GSTR-3B', day: 20 }]
           : [{ name: 'VAT return (quarterly)', day: 28 }, { name: 'Corporate Tax return', day: 0 }];
-      return { regime: erpContext(t).settings.taxRegime, periods, dueDates };
+      return { regime: erpContext(t).settings.taxRegime, periods, dueDates, eInvoicing: await eInvoiceSummary(c, t) };
     });
 
     // ---------------- Ask your books ----------------
@@ -305,12 +317,26 @@ export const appRoutes =
       settings: tenantSettingsSchema
         .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true })
         .partial()
+        .extend({
+          address: tenantSettingsSchema.shape.address.removeDefault().optional(),
+          eInvoicing: eInvoicingSettingsSchema.partial().optional(),
+          auditPolicy: auditPolicySchema.partial().optional(),
+          forecast: forecastSettingsSchema.partial().optional(),
+        })
         .optional(),
     });
     app.patch('/settings', { schema: { tags: ['app'], body: settingsPatch } }, async (req) => {
       requireOwner(req);
       const t = req.tenant!;
-      const merged = tenantSettingsSchema.parse({ ...(t.settings as object), ...(req.body.settings ?? {}) });
+      const current = (t.settings ?? {}) as Record<string, unknown>;
+      const patch = (req.body.settings ?? {}) as Record<string, unknown>;
+      // nested groups merge one level deep so a partial update keeps the other fields
+      const nested = Object.fromEntries(
+        ['address', 'eInvoicing', 'auditPolicy', 'forecast', 'reminders', 'dailySummary', 'bank']
+          .filter((k) => patch[k] && typeof patch[k] === 'object')
+          .map((k) => [k, { ...((current[k] as object) ?? {}), ...(patch[k] as object) }]),
+      );
+      const merged = tenantSettingsSchema.parse({ ...current, ...patch, ...nested });
       const updated = await req.db!.tenant.update({
         where: { id: t.id },
         data: { name: req.body.name, language: req.body.language, settings: merged as Prisma.InputJsonValue },

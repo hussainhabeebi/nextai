@@ -8,6 +8,7 @@ import { MockLlm, MockStt, MockVision } from '../src/ai/mock.js';
 import type { Container } from '../src/container.js';
 import { createPrisma, withSystemTx } from '../src/lib/db.js';
 import { MemoryJobQueue } from '../src/lib/queue.js';
+import { SandboxGateway } from '../src/modules/einvoice/gateway.js';
 import { FakeProvisionerClient } from '../src/modules/provisioning/provisioner-client.js';
 import { sealCwBotToken, sealErpKey, sealErpSecret } from '../src/modules/tenants/secrets.js';
 import { MemoryConversationStore } from '../src/state/conversation.js';
@@ -19,6 +20,7 @@ export interface TestContainer extends Container {
   conversations: MemoryConversationStore;
   payments: FakePaymentProvider;
   provisioner: FakeProvisionerClient;
+  einvoice: SandboxGateway;
   erps: Map<string, FakeErpClient>;
   cws: Map<string, FakeChatwootClient>;
   close(): Promise<void>;
@@ -40,6 +42,7 @@ export function testContainer(): TestContainer {
     chatwoot: (t: Tenant) => cws.get(t.id) ?? cws.set(t.id, new FakeChatwootClient()).get(t.id)!,
     payments: new FakePaymentProvider(),
     provisioner: new FakeProvisionerClient(),
+    einvoice: new SandboxGateway(),
     erps,
     cws,
     close: async () => {},

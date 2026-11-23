@@ -6,6 +6,9 @@ import { processOcr } from '../modules/ocr/pipeline.js';
 import { processVoice } from '../modules/voice/pipeline.js';
 import { sendInvoice, sendReceipt, sendReminder } from '../modules/outbound/jobs.js';
 import { billingSync } from '../modules/billing/service.js';
+import { executeAuditRun, scheduleAudits } from '../modules/audit-copilot/service.js';
+import { hasFeature } from '../modules/billing/gating.js';
+import { submitEInvoice } from '../modules/einvoice/service.js';
 import { healthErpnext, scheduleDailySummary, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
 
 const tenantId = z.string().uuid();
@@ -16,6 +19,8 @@ export const jobSchemas = {
   [QUEUES.outboundInvoice]: z.object({ tenantId, invoiceName: z.string(), draftId: z.string().uuid().optional() }),
   [QUEUES.outboundReceipt]: z.object({ tenantId, paymentName: z.string() }),
   [QUEUES.outboundReminder]: z.object({ tenantId, invoiceName: z.string().optional(), party: z.string().optional(), conversationId: z.number().optional() }),
+  [QUEUES.einvoiceSubmit]: z.object({ tenantId, invoiceName: z.string().min(1).max(140), sendAfter: z.boolean().optional(), draftId: z.string().uuid().optional(), force: z.boolean().optional() }),
+  [QUEUES.auditRun]: z.object({ tenantId, runId: z.string().uuid() }),
 } as const;
 const fanOut = z.object({ tenantId: z.literal('*') });
 
@@ -38,5 +43,11 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.usageRollup]: (d) => (fanOut.parse(d), usageRollup(c)),
     [QUEUES.healthErpnext]: (d) => (fanOut.parse(d), healthErpnext(c)),
     [QUEUES.billingSync]: (d) => (fanOut.parse(d), billingSync(c)),
+    [QUEUES.einvoiceSubmit]: (d) => submitEInvoice(c, jobSchemas[QUEUES.einvoiceSubmit].parse(d)),
+    [QUEUES.auditRun]: (d) => {
+      const j = jobSchemas[QUEUES.auditRun].parse(d);
+      return executeAuditRun(c, j.tenantId, j.runId);
+    },
+    [QUEUES.scheduleAudit]: (d) => (fanOut.parse(d), scheduleAudits(c, (t) => hasFeature(c, t, 'audit_copilot'))),
   };
 }

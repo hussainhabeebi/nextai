@@ -11,7 +11,7 @@ import { useApi } from '@/lib/hooks';
 
 export default function Tax() {
   const { me } = useAuth();
-  const { data, error, loading } = useApi<{ regime: string; periods: Array<{ period: string; output: number; input: number; net: number }>; dueDates: Array<{ name: string; day: number }> }>('/v1/tax');
+  const { data, error, loading } = useApi<{ regime: string; periods: Array<{ period: string; output: number; input: number; net: number }>; dueDates: Array<{ name: string; day: number }>; eInvoicing?: { enabled: boolean; needsAction: number; reported: { invoices: number; tax: number } } }>('/v1/tax');
   const cur = me?.tenant.currency;
   const isIn = me?.tenant.country === 'IN';
   if ((error as ApiError | undefined)?.status === 402)
@@ -36,6 +36,17 @@ export default function Tax() {
           ))}
         </ul>
       </Card>
+      {data?.eInvoicing && (
+        <Link href="/einvoices" className="mb-4 block">
+          <Card className="flex items-center justify-between gap-2">
+            <span>
+              <span className="block font-semibold">E-invoicing {data.eInvoicing.enabled ? 'on' : 'off'}</span>
+              <span className="text-sm text-muted">{data.eInvoicing.reported.invoices} reported · tax {money(data.eInvoicing.reported.tax, cur)}</span>
+            </span>
+            {data.eInvoicing.needsAction > 0 && <span className="text-sm font-medium text-red-600">{data.eInvoicing.needsAction} to fix</span>}
+          </Card>
+        </Link>
+      )}
       {loading && <Skeleton className="h-40" />}
       {data?.periods.length === 0 && <Empty>No taxable transactions yet.</Empty>}
       <ul className="space-y-3">

@@ -144,7 +144,24 @@ POSTGRES_PASSWORD=... NEXTAI_APP_PASSWORD=... docker compose -f infra/docker-com
 
 Health: `GET /healthz` (liveness), `GET /readyz` (Postgres + Redis).
 
+## AI accounting features
+
+- **Audit Copilot** (Pro): tests 100% of transactions (duplicates, IN Sec 40A(3)/269ST cash limits, split payments,
+  GSTIN/TRN gaps, invoice-number gaps, outliers, Benford, …) with hash-chained evidence and a CSV/JSON workpaper.
+- **Cash-flow forecast** (Growth+): 13 weeks from AR/AP, learned customer payment delays, seasonality and macro
+  signals, Monte Carlo risk band, what-if simulator.
+- **E-invoicing** (all plans): India IRP (IRN + QR), UAE Peppol PINT AE, KSA ZATCA (hash chain + TLV QR); invoices
+  are held until registered.
+
+Details: [docs/architecture.md § AI accounting features](docs/architecture.md#ai-accounting-features).
+
 ## Known gaps / TODOs
+
+- E-invoicing uses the local **sandbox** until `EINVOICE_GATEWAY_URL` points at a licensed GSP / Peppol access point /
+  ZATCA-onboarded service; the HTTP contract may need an adapter per provider. ZATCA XAdES signing (CSID) is expected
+  from that service, and KSA tenants (country `SA`, SAR) are not provisionable yet. Verify the PINT AE identifiers
+  against the FTA's final specification before go-live.
+- Forecast macro inputs are per-country defaults / tenant overrides, not a live economic data feed.
 
 - Speech-to-text adapter: interface + mock only (`AI_STT_PROVIDER=mock`); add a provider supporting en/ml/ar.
 - Vision/LLM adapters: Anthropic + mock; others plug in behind `VisionProvider` / `LlmProvider`.

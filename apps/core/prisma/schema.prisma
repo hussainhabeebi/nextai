@@ -131,6 +131,9 @@ model Tenant {
   auditLogs       AuditLog[]
   pushSubs        PushSubscription[]
   outbound        OutboundMessage[]
+  auditRuns       AuditRun[]
+  auditFindings   AuditFinding[]
+  eInvoices       EInvoice[]
 
   @@map("tenants")
 }
@@ -400,4 +403,123 @@ model MessageTemplate {
 
   @@unique([key, language])
   @@map("message_templates")
+}
+
+enum AuditRunStatus {
+  running
+  completed
+  failed
+}
+
+enum FindingSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum FindingStatus {
+  open
+  resolved
+  dismissed
+}
+
+/// One full-population audit pass over a period. datasetHash fingerprints every transaction tested,
+/// evidenceHash chains to the previous run so a run's evidence cannot be silently rewritten.
+model AuditRun {
+  id           String         @id @default(uuid()) @db.Uuid
+  tenantId     String         @map("tenant_id") @db.Uuid
+  periodFrom   String         @map("period_from") // YYYY-MM-DD
+  periodTo     String         @map("period_to")
+  status       AuditRunStatus @default(running)
+  trigger      String         @default("manual") // manual | schedule
+  txnCount     Int            @default(0) @map("txn_count")
+  totalValue   Float          @default(0) @map("total_value")
+  datasetHash  String?        @map("dataset_hash")
+  prevHash     String?        @map("prev_hash")
+  evidenceHash String?        @map("evidence_hash")
+  summary      Json           @default("{}")
+  error        String?
+  requestedBy  String?        @map("requested_by") @db.Uuid
+  startedAt    DateTime       @default(now()) @map("started_at")
+  finishedAt   DateTime?      @map("finished_at")
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  findings     AuditFinding[]
+
+  @@index([tenantId, startedAt])
+  @@map("audit_runs")
+}
+
+model AuditFinding {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @map("tenant_id") @db.Uuid
+  runId       String          @map("run_id") @db.Uuid
+  rule        String
+  severity    FindingSeverity
+  title       String
+  detail      String
+  amount      Float?
+  /// Stable key (rule + transactions) so the same issue is not re-raised as new on every run.
+  fingerprint String
+  txnRefs     Json            @map("txn_refs") // [{ doctype, name }]
+  evidence    Json
+  status      FindingStatus   @default(open)
+  resolution  String?
+  resolvedBy  String?         @map("resolved_by") @db.Uuid
+  resolvedAt  DateTime?       @map("resolved_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id])
+  run         AuditRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([runId])
+  @@index([tenantId, fingerprint])
+  @@map("audit_findings")
+}
+
+enum EInvoiceStatus {
+  pending
+  invalid
+  submitted
+  accepted
+  rejected
+  cancelled
+  failed
+}
+
+/// Statutory e-invoice for one ERPNext Sales Invoice (India IRP, UAE Peppol / FTA, KSA ZATCA).
+model EInvoice {
+  id           String         @id @default(uuid()) @db.Uuid
+  tenantId     String         @map("tenant_id") @db.Uuid
+  scheme       String // in_irp | ae_peppol | sa_zatca
+  invoiceName  String         @map("invoice_name")
+  status       EInvoiceStatus @default(pending)
+  /// IN: IRN (64 hex); AE/SA: document UUID
+  irn          String?
+  ackNo        String?        @map("ack_no")
+  ackDate      DateTime?      @map("ack_date")
+  /// Payload for the QR code printed on the invoice (signed JWT for IRP, base64 TLV for ZATCA).
+  qrPayload    String?        @map("qr_payload")
+  /// SHA-256 of the canonical document; ZATCA/Peppol chain to the previous invoice via prevHash.
+  docHash      String?        @map("doc_hash")
+  prevHash     String?        @map("prev_hash")
+  counter      Int?           // invoice counter value (ZATCA ICV)
+  r2Key        String?        @map("r2_key") // submitted JSON/XML
+  total        Float          @default(0)
+  taxTotal     Float          @default(0) @map("tax_total")
+  buyerTaxId   String?        @map("buyer_tax_id")
+  errors       Json           @default("[]")
+  attempts     Int            @default(0)
+  submittedAt  DateTime?      @map("submitted_at")
+  cancelledAt  DateTime?      @map("cancelled_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, invoiceName])
+  @@index([tenantId, status])
+  @@map("einvoices")
 }

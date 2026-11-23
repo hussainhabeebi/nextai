@@ -82,4 +82,6 @@ export const SCHEDULE_QUEUES = {
   [QUEUES.usageRollup]: '15 * * * *',
   [QUEUES.billingSync]: '30 2 * * *',
   [QUEUES.healthErpnext]: '*/5 * * * *',
+  // weekly full-population audit, Mondays 03:10 UTC
+  [QUEUES.scheduleAudit]: '10 3 * * 1',
 } as const;

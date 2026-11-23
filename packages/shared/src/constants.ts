@@ -47,7 +47,7 @@ export type Intent = (typeof INTENTS)[number];
 export const PLAN_CODES = ['base', 'growth', 'pro'] as const;
 export type PlanCode = (typeof PLAN_CODES)[number];
 
-export const FEATURES = ['tax_centre', 'payroll', 'multi_currency', 'api_access', 'ask_books'] as const;
+export const FEATURES = ['tax_centre', 'payroll', 'multi_currency', 'api_access', 'ask_books', 'e_invoicing', 'cash_forecast', 'audit_copilot'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 export const REPORT_NAMES = {
@@ -72,6 +72,9 @@ export const QUEUES = {
   usageRollup: 'usage.rollup',
   billingSync: 'billing.sync',
   healthErpnext: 'health.erpnext',
+  einvoiceSubmit: 'einvoice.submit',
+  auditRun: 'audit.run',
+  scheduleAudit: 'schedule.audit',
   deadLetter: 'dead-letter',
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
