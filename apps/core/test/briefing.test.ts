@@ -75,6 +75,17 @@ describe('daily briefing and deadline warnings', () => {
     expect(b.text).toMatch(/🏦 1 bank line to check/);
   });
 
+  it('adds up several overdue invoices of one customer into one line', async () => {
+    const erp = c.erp(A.tenant) as unknown as Fake;
+    await erp.create('Sales Invoice', { name: 'SINV-3', customer: 'Ravi Traders', outstanding_amount: 3000, due_date: '2026-11-05' });
+    erp.docs.get('Sales Invoice')!.get('SINV-3')!.docstatus = 1;
+    const b = await buildBriefing(c, A.tenant, new Date('2026-11-17T04:00:00Z'));
+    // One numbered line for the customer, with both invoices added up (12,000 + 3,000).
+    expect(b.text.match(/^\S+ Ravi Traders$/gm)).toHaveLength(1);
+    expect(b.text).toMatch(/1️⃣ Ravi Traders\n\s+₹15,000.00 · 🟠 18 days late/);
+    erp.docs.get('Sales Invoice')!.delete('SINV-3');
+  });
+
   it('answers "briefing" on WhatsApp', async () => {
     c.chatwoot(A.tenant);
     await postCw(app, cwMessage({ inboxId: A.tenant.cwInboxId!, phone: A.owner.phone!, content: 'briefing', conversationId: 7001 }));

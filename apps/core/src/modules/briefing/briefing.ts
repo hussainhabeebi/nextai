@@ -12,6 +12,7 @@ import { erpContext } from '../erpnext/mappers.js';
 import { sendWhatsApp } from '../outbound/whatsapp.js';
 import { localDate } from '../outbound/time.js';
 import { dayTotals } from '../reports/analytics.js';
+import { moneyBalances } from '../reports/answers.js';
 import { daysBetween, upcomingDeadlines, type Deadline } from './deadlines.js';
 
 type Overdue = { name: string; customer: string; outstanding_amount: number; due_date: string };
@@ -20,6 +21,20 @@ export interface Blockers {
   pending: number;
   erpDrafts: number;
   noTaxId: number;
+}
+
+/** One line per customer: their overdue invoices added up, oldest due date kept; biggest first. */
+function byCustomer(rows: Overdue[]): Overdue[] {
+  const g = new Map<string, Overdue>();
+  for (const r of rows) {
+    const x = g.get(r.customer);
+    if (!x) g.set(r.customer, { ...r, outstanding_amount: Number(r.outstanding_amount) || 0 });
+    else {
+      x.outstanding_amount += Number(r.outstanding_amount) || 0;
+      if (r.due_date < x.due_date) x.due_date = r.due_date;
+    }
+  }
+  return [...g.values()].sort((a, b) => b.outstanding_amount - a.outstanding_amount);
 }
 
 const short = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -83,7 +98,7 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
 
   const [totals, balances, overdue, pending, bankToCheck] = await Promise.all([
     dayTotals(c, tenant, day).catch(() => null),
-    erp.getBalances(company).catch(() => null),
+    moneyBalances(c, tenant, day).catch(() => erp.getBalances(company)).catch(() => null),
     erp
       .list<Overdue>('Sales Invoice', {
         filters: [['docstatus', '=', 1], ['outstanding_amount', '>', 0], ['due_date', '<', day]],
@@ -91,6 +106,7 @@ export async function buildBriefing(c: Container, tenant: Tenant, at = new Date(
         orderBy: 'outstanding_amount desc',
         limit: 200,
       })
+      .then(byCustomer)
       .catch(() => [] as Overdue[]),
     db.draft.count({ where: { status: { in: ['pending', 'needs_review'] } } }),
     db.bankLine.count({ where: { OR: [{ status: 'unmatched' }, { status: 'suggested', draftId: null }] } }),
