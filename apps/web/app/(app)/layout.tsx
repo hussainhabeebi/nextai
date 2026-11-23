@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Banknote, Bot, Briefcase, Camera, CheckCircle2, CreditCard, Home, Landmark, Menu, Receipt, Settings, Sparkles, Users } from 'lucide-react';
+import { BarChart3, Banknote, Bot, Briefcase, Building2, Camera, CheckCircle2, CreditCard, Home, Landmark, Menu, Receipt, Settings, Sparkles, TrendingUp, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
@@ -53,6 +53,17 @@ function Sidebar({ path, approvals }: { path: string; approvals?: number }) {
         { href: '/ask', label: 'Ask your books', icon: Bot },
       ],
     },
+    ...(me?.user?.role === 'owner' || me?.user?.role === 'tenant_accountant'
+      ? [
+          {
+            title: 'Team',
+            items: [
+              { href: '/office', label: 'Office', icon: Building2 },
+              { href: '/pipeline', label: 'Sales pipeline', icon: TrendingUp },
+            ],
+          },
+        ]
+      : []),
     {
       title: 'Account',
       items: [

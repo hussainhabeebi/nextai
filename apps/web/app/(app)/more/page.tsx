@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Banknote, Bot, Briefcase, ChevronRight, CreditCard, Landmark, LogOut, Receipt, Settings, Sparkles, Users, Wallet } from 'lucide-react';
+import { BarChart3, Banknote, Bot, Briefcase, Building2, ChevronRight, CreditCard, Landmark, LogOut, Receipt, Settings, Sparkles, TrendingUp, Users, Wallet } from 'lucide-react';
 import { useView } from '@/lib/views';
 import Link from 'next/link';
 import { Page } from '@/components/page';
@@ -8,6 +8,11 @@ import { Card } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 
+/** Team tools for the business owner (the accountant can view). */
+const TEAM = [
+  { href: '/office', label: 'Office', icon: Building2 },
+  { href: '/pipeline', label: 'Sales pipeline', icon: TrendingUp },
+];
 const LINKS = [
   { href: '/insights', label: 'Insights & analysis', icon: Sparkles },
   { href: '/purchases', label: 'Purchases & expenses', icon: Receipt },
@@ -48,7 +53,7 @@ export default function More() {
         ))}
       </Card>
       <Card className="divide-y divide-line p-0">
-        {LINKS.map(({ href, label: l, icon: Icon }) => ({ href, label: href === '/parties' ? labels.parties : l, icon: Icon })).map(({ href, label, icon: Icon }) => (
+        {[...(me?.user?.role === 'owner' || me?.user?.role === 'tenant_accountant' ? TEAM : []), ...LINKS].map(({ href, label: l, icon: Icon }) => ({ href, label: href === '/parties' ? labels.parties : l, icon: Icon })).map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href} className="flex min-h-14 items-center gap-3 px-4">
             <Icon className="h-5 w-5 text-brand" />
             <span className="flex-1">{label}</span>

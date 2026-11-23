@@ -108,13 +108,14 @@ describe('staff given at signup', () => {
     const ok = await post('/v1/signup/verify', { signupId: start.json().signupId, code: start.json().devCode });
     expect(ok.statusCode).toBe(200);
     const users = await withSystemTx(c.prisma, (tx) => tx.user.findMany({ where: { tenantId: ok.json().tenantId }, orderBy: { createdAt: 'asc' } }));
-    expect(users.map((u) => [u.name, u.role, u.status])).toEqual([
+    // Created in the same instant (equal createdAt), so compare as a set rather than by insertion order.
+    expect(users.map((u) => [u.name, u.role, u.status]).sort()).toEqual([
       ['Anu', 'owner', 'invited'], // active once they open the signup link
       ['Anil', 'staff', 'invited'],
       ['CA Priya', 'tenant_accountant', 'invited'],
       ['Third', 'staff', 'invited'],
-    ]);
-    expect(users[1]!.phone).toBe(`+91${staffLocal}`);
+    ].sort());
+    expect(users.find((u) => u.name === 'Anil')!.phone).toBe(`+91${staffLocal}`);
 
     const otp = (await post('/v1/auth/otp/request', { phone: staffLocal })).json();
     expect(otp).toMatchObject({ sent: true, channel: 'email' });

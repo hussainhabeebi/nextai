@@ -273,7 +273,7 @@ export async function decideApproval(
   tenant: Tenant,
   code: number,
   decision: 'approved' | 'rejected',
-  by: { staff?: StaffMember; adminId?: string },
+  by: { staff?: StaffMember; userId?: string; adminId?: string },
   note?: string,
 ) {
   const db = tenantDb(c.prisma, tenant.id);
@@ -286,11 +286,11 @@ export async function decideApproval(
   }
   const updated = await db.approval.update({
     where: { id: a.id },
-    data: { status: decision, decidedBy: by.staff?.id ?? `admin:${by.adminId}`, decisionNote: note || null, decidedAt: new Date() },
+    data: { status: decision, decidedBy: by.staff?.id ?? (by.userId ? `app:${by.userId}` : `admin:${by.adminId}`), decisionNote: note || null, decidedAt: new Date() },
   });
   if (a.kind === 'leave' && a.ref) await db.leaveRequest.updateMany({ where: { id: a.ref }, data: { status: decision } });
   const requester = a.requestedById ? await db.staffMember.findFirst({ where: { id: a.requestedById } }) : null;
-  const decider = by.staff?.name ?? 'Admin';
+  const decider = by.staff?.name ?? (by.userId ? 'the owner' : 'Admin');
   if (requester) {
     await sendStaff(c, tenant, requester, `${decision === 'approved' ? '✅ Approved' : '❌ Rejected'}: #${a.code} ${a.title} (by ${decider})${note ? `\n${note}` : ''}`, `office:decision:${a.id}`);
   }

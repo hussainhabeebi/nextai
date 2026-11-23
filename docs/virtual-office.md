@@ -1,18 +1,21 @@
 # Virtual office
 
-The team runs its day from WhatsApp on a **separate staff number**, and management watches it live in **Admin → Office**.
+The team runs its day from WhatsApp on a **separate staff number**, and the business owner runs it from the business app: **Team → Office** (sidebar, or **More** on a phone).
+It belongs to each business, not to the NextAi admin console: the owner manages it, the business's accountant can view it, staff
+use it only through WhatsApp.
 It sits on top of the lead-to-customer lifecycle ([lifecycle.md](lifecycle.md)) and uses the same staff list.
 
 ## Set-up
 
-1. Connect a second WhatsApp number to Chatwoot as its own inbox, with the same Agent Bot webhook URL as the customer inbox.
-2. **Admin → Office → Settings:**
-   - Enter that inbox's id as the *staff number*. It must be different from the customer inbox.
-   - Set office hours and work days, and choose which features are on.
+1. **NextAi support (admin console):** connect a second WhatsApp number to Chatwoot as its own inbox, with the same Agent
+   Bot webhook URL as the customer inbox, then enter its inbox id under **Admin → Tenants → the business → Staff WhatsApp
+   number**. This stays with support, like the customer inbox, so a business can't claim an inbox it doesn't own.
+2. **Business owner, Team → Office → Settings:**
+   - Set office hours and work days, and choose which features are on. The page shows whether the staff number is connected.
    - Set each person's **backup** for leave, and their **ERPNext Employee** id if attendance should sync.
-3. **Admin → Lifecycle → Staff:** every team member needs their WhatsApp number and roles. Give `management` to whoever
+3. **Business owner, Team → Sales pipeline → Staff:** every team member needs their WhatsApp number and roles. Give `management` to whoever
    approves requests and receives summaries.
-4. **Admin → Templates:** map `office_notice` (one `message` param) to an approved WhatsApp utility template. Messages the
+4. **NextAi support, Admin → Templates:** map `office_notice` (one `message` param) to an approved WhatsApp utility template. Messages the
    office sends first (nudges, reminders, approvals) need it once the 24-hour window has passed.
 
 Once a staff number is set, **all staff notifications** go out from it: lifecycle reminders, escalations, the morning digest
@@ -56,7 +59,7 @@ the customer number as before.
 Each daily action runs **once per day**. If the worker was down, an action only fires within 2 hours of its scheduled
 time, so nobody gets stale nudges late in the day.
 
-## Admin → Office
+## Team → Office (business app)
 
 | Tab | Shows |
 |---|---|

@@ -1,12 +1,13 @@
 'use client';
 
 import { LIFECYCLE_ROLES, REMINDER_AUDIENCES } from '@nextai/shared';
-import { useEffect, useState } from 'react';
-import { H1, Stat, Table } from '@/components/admin/table';
+import { useState } from 'react';
+import { Stat, Table } from '@/components/admin/table';
+import { Page } from '@/components/page';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/input';
-import { adminApi } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
 type Level = { id: string; level: number; offsetMinutes: number; audience: string; templateKey: string; message: string; enabled: boolean };
@@ -86,14 +87,14 @@ function LevelEditor({ initial, onSave, onCancel }: { initial: Omit<Level, 'id' 
   );
 }
 
-function RuleCard({ tenantId, rule, reload }: { tenantId: string; rule: Rule; reload: () => Promise<void> }) {
+function RuleCard({ rule, reload }: { rule: Rule; reload: () => Promise<void> }) {
   const [editing, setEditing] = useState<string | 'new' | null>(null);
-  const base = `/admin/v1/tenants/${tenantId}/lifecycle`;
-  const patchRule = async (json: Partial<Rule>) => (await adminApi.request(`${base}/rules/${rule.id}`, { method: 'PATCH', json }), reload());
-  const patchLevel = async (id: string, json: Partial<Level>) => (await adminApi.request(`${base}/levels/${id}`, { method: 'PATCH', json }), reload());
+  const base = `/v1/lifecycle`;
+  const patchRule = async (json: Partial<Rule>) => (await api.request(`${base}/rules/${rule.id}`, { method: 'PATCH', json }), reload());
+  const patchLevel = async (id: string, json: Partial<Level>) => (await api.request(`${base}/levels/${id}`, { method: 'PATCH', json }), reload());
   const del = async (id: string) => {
     if (!confirm('Delete this reminder level?')) return;
-    await adminApi.request(`${base}/levels/${id}`, { method: 'DELETE' });
+    await api.request(`${base}/levels/${id}`, { method: 'DELETE' });
     await reload();
   };
   return (
@@ -140,7 +141,7 @@ function RuleCard({ tenantId, rule, reload }: { tenantId: string; rule: Rule; re
         <LevelEditor
           initial={{ offsetMinutes: 60, audience: 'owner', templateKey: 'lifecycle_notice', message: '', enabled: true }}
           onCancel={() => setEditing(null)}
-          onSave={async (v) => (await adminApi.request(`${base}/rules/${rule.id}/levels`, { method: 'POST', json: v }), await reload(), setEditing(null))}
+          onSave={async (v) => (await api.request(`${base}/rules/${rule.id}/levels`, { method: 'POST', json: v }), await reload(), setEditing(null))}
         />
       ) : (
         <Button variant="secondary" className="mt-2" onClick={() => setEditing('new')}>Add reminder level</Button>
@@ -149,20 +150,20 @@ function RuleCard({ tenantId, rule, reload }: { tenantId: string; rule: Rule; re
   );
 }
 
-function StaffPanel({ tenantId, staff, reload }: { tenantId: string; staff: Staff[]; reload: () => Promise<void> }) {
+function StaffPanel({ staff, reload }: { staff: Staff[]; reload: () => Promise<void> }) {
   const [f, setF] = useState({ name: '', phone: '', erpUser: '', roles: ['sales'] as string[] });
   const [err, setErr] = useState('');
   const add = async () => {
     setErr('');
     try {
-      await adminApi.request(`/admin/v1/tenants/${tenantId}/staff`, { method: 'POST', json: { ...f, erpUser: f.erpUser || null } });
+      await api.request(`/v1/staff`, { method: 'POST', json: { ...f, erpUser: f.erpUser || null } });
       setF({ name: '', phone: '', erpUser: '', roles: ['sales'] });
       await reload();
     } catch (e) {
       setErr((e as Error).message);
     }
   };
-  const patch = async (id: string, json: Partial<Staff>) => (await adminApi.request(`/admin/v1/tenants/${tenantId}/staff/${id}`, { method: 'PATCH', json }), reload());
+  const patch = async (id: string, json: Partial<Staff>) => (await api.request(`/v1/staff/${id}`, { method: 'PATCH', json }), reload());
   return (
     <div>
       <form className="mb-3 grid gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]" onSubmit={(e) => (e.preventDefault(), void add())}>
@@ -190,12 +191,12 @@ function StaffPanel({ tenantId, staff, reload }: { tenantId: string; staff: Staf
   );
 }
 
-function SettingsPanel({ tenantId, settings, reload }: { tenantId: string; settings: Settings; reload: () => Promise<void> }) {
+function SettingsPanel({ settings, reload }: { settings: Settings; reload: () => Promise<void> }) {
   const [f, setF] = useState({ ...settings, checklist: settings.dataChecklist.join(', ') });
   const [saved, setSaved] = useState(false);
   const save = async () => {
     const { checklist, ...rest } = f;
-    await adminApi.request(`/admin/v1/tenants/${tenantId}/lifecycle/settings`, { method: 'PATCH', json: { ...rest, dataChecklist: checklist.split(',').map((x) => x.trim()).filter(Boolean) } });
+    await api.request(`/v1/lifecycle/settings`, { method: 'PATCH', json: { ...rest, dataChecklist: checklist.split(',').map((x) => x.trim()).filter(Boolean) } });
     setSaved(true);
     await reload();
   };
@@ -217,9 +218,9 @@ function SettingsPanel({ tenantId, settings, reload }: { tenantId: string; setti
   );
 }
 
-function ReportPanel({ tenantId }: { tenantId: string }) {
+function ReportPanel() {
   const [days, setDays] = useState(30);
-  const { data: r } = useApi<Report>(`/admin/v1/tenants/${tenantId}/lifecycle/report?days=${days}`, adminApi);
+  const { data: r } = useApi<Report>(`/v1/lifecycle/report?days=${days}`);
   if (!r) return <div className="h-32 animate-pulse rounded-xl bg-line/60" />;
   return (
     <div className="grid min-w-0 grid-cols-1 gap-4 [&>*]:min-w-0">
@@ -269,39 +270,25 @@ function ReportPanel({ tenantId }: { tenantId: string }) {
   );
 }
 
-export default function Lifecycle() {
-  const { data: tenants } = useApi<{ items: Array<{ id: string; name: string; slug: string }> }>('/admin/v1/tenants', adminApi);
-  const [tenantId, setTenantId] = useState('');
+export default function Pipeline() {
   const [tab, setTab] = useState<'report' | 'rules' | 'staff' | 'timers' | 'setup'>('report');
   const [secret, setSecret] = useState('');
-  useEffect(() => {
-    if (!tenantId && tenants?.items[0]) setTenantId(tenants.items[0].id);
-  }, [tenants, tenantId]);
-  const { data, reload } = useApi<Data>(tenantId ? `/admin/v1/tenants/${tenantId}/lifecycle` : null, adminApi);
-  const { data: timers } = useApi<{ items: Timer[] }>(tenantId && tab === 'timers' ? `/admin/v1/tenants/${tenantId}/lifecycle/timers` : null, adminApi);
-  const install = async () => (await adminApi.request(`/admin/v1/tenants/${tenantId}/lifecycle/install`, { method: 'POST' }), reload());
+  const { data, reload } = useApi<Data>('/v1/lifecycle');
+  const { data: timers } = useApi<{ items: Timer[] }>(tab === 'timers' ? '/v1/lifecycle/timers' : null);
+  const install = async () => (await api.request('/v1/lifecycle/install', { method: 'POST' }), reload());
   const rotate = async () => {
     if (data?.leadWebhook.configured && !confirm('Rotate the secret? Leadvyne must be updated with the new one.')) return;
-    const r = await adminApi.request<{ secret: string }>(`/admin/v1/tenants/${tenantId}/lifecycle/lead-webhook-secret`, { method: 'POST' });
+    const r = await api.request<{ secret: string }>('/v1/lifecycle/lead-webhook-secret', { method: 'POST' });
     setSecret(r.secret);
     await reload();
   };
 
   return (
-    <div>
-      <H1
-        action={
-          <Select value={tenantId} onChange={(e) => setTenantId(e.target.value)} aria-label="Tenant">
-            {tenants?.items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </Select>
-        }
-      >
-        Lifecycle & reminders
-      </H1>
-      <p className="mb-4 text-sm text-muted">Lead → customer → support playbook. Every reminder level can be re-timed, re-targeted, reworded or switched off.</p>
+    <Page title="Sales pipeline" back="/" size="wide" onRefresh={reload}>
+      <p className="mb-4 text-sm text-muted">Lead → customer → support. Every reminder can be re-timed, sent to someone else, reworded or switched off.</p>
       <div className="mb-4 flex gap-1 overflow-x-auto">
         {(['report', 'rules', 'staff', 'timers', 'setup'] as const).map((t) => (
-          <Button key={t} variant={tab === t ? 'primary' : 'ghost'} onClick={() => setTab(t)}>{t[0]!.toUpperCase() + t.slice(1)}</Button>
+          <Button key={t} variant={tab === t ? 'primary' : 'ghost'} onClick={() => setTab(t)}>{t === 'timers' ? 'Open steps' : t[0]!.toUpperCase() + t.slice(1)}</Button>
         ))}
       </div>
 
@@ -313,15 +300,15 @@ export default function Lifecycle() {
           </div>
         ) : (
           <div className="grid gap-3">
-            {data.rules.map((r) => <RuleCard key={r.id} tenantId={tenantId} rule={r} reload={reload} />)}
+            {data.rules.map((r) => <RuleCard key={r.id} rule={r} reload={reload} />)}
             <Button variant="ghost" onClick={() => void install()}>Add missing default rules</Button>
           </div>
         )
       )}
 
-      {tab === 'report' && tenantId && <ReportPanel tenantId={tenantId} />}
+      {tab === 'report' && <ReportPanel />}
 
-      {tab === 'staff' && data && <StaffPanel tenantId={tenantId} staff={data.staff} reload={reload} />}
+      {tab === 'staff' && data && <StaffPanel staff={data.staff} reload={reload} />}
 
       {tab === 'timers' && (
         <Table
@@ -340,7 +327,7 @@ export default function Lifecycle() {
 
       {tab === 'setup' && data && (
         <div className="grid min-w-0 grid-cols-1 gap-4 text-sm [&_code]:break-all [&>*]:min-w-0">
-          <SettingsPanel key={tenantId} tenantId={tenantId} settings={data.settings} reload={reload} />
+          <SettingsPanel settings={data.settings} reload={reload} />
           <section className="rounded-xl border border-line bg-card p-4">
             <h2 className="mb-1 font-semibold">Leadvyne lead webhook</h2>
             <p className="mb-2 text-muted">
@@ -359,6 +346,6 @@ export default function Lifecycle() {
           </section>
         </div>
       )}
-    </div>
+    </Page>
   );
 }
