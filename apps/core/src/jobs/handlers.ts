@@ -11,6 +11,9 @@ import { billingSync } from '../modules/billing/service.js';
 import { sendAdminDailyReport } from '../modules/email/reports.js';
 import { LIFECYCLE_DOCTYPES, LIFECYCLE_EVENTS, handleLifecycleEvent } from '../modules/lifecycle/events.js';
 import { healthErpnext, lifecycleScan, scheduleDailySummary, scheduleDeadlines, scheduleOffice, scheduleReminders, usageRollup } from '../modules/scheduling/schedulers.js';
+import { executeAuditRun, scheduleAudits } from '../modules/audit-copilot/service.js';
+import { hasFeature } from '../modules/billing/gating.js';
+import { submitEInvoice } from '../modules/einvoice/service.js';
 
 const tenantId = z.string().uuid();
 export const jobSchemas = {
@@ -23,6 +26,8 @@ export const jobSchemas = {
   [QUEUES.outboundReminder]: z.object({ tenantId, invoiceName: z.string().optional(), party: z.string().optional(), conversationId: z.number().optional() }),
   [QUEUES.lifecycleEvent]: z.object({ tenantId, doctype: z.enum(LIFECYCLE_DOCTYPES), name: z.string().min(1).max(140), event: z.enum(LIFECYCLE_EVENTS) }),
   [QUEUES.bankStatement]: z.object({ tenantId, r2Key: z.string(), mime: z.string(), name: z.string().optional(), conversationId: z.number().optional(), userId: z.string().uuid().optional() }),
+  [QUEUES.einvoiceSubmit]: z.object({ tenantId, invoiceName: z.string().min(1).max(140), sendAfter: z.boolean().optional(), draftId: z.string().uuid().optional(), force: z.boolean().optional() }),
+  [QUEUES.auditRun]: z.object({ tenantId, runId: z.string().uuid() }),
 } as const;
 const fanOut = z.object({ tenantId: z.literal('*') });
 
@@ -52,5 +57,11 @@ export function jobHandlers(c: Container): Partial<Record<QueueName, JobHandler>
     [QUEUES.healthErpnext]: (d) => (fanOut.parse(d), healthErpnext(c)),
     [QUEUES.billingSync]: (d) => (fanOut.parse(d), billingSync(c)),
     [QUEUES.reportAdminDaily]: (d) => (fanOut.parse(d), sendAdminDailyReport(c)),
+    [QUEUES.einvoiceSubmit]: (d) => submitEInvoice(c, jobSchemas[QUEUES.einvoiceSubmit].parse(d)),
+    [QUEUES.auditRun]: (d) => {
+      const j = jobSchemas[QUEUES.auditRun].parse(d);
+      return executeAuditRun(c, j.tenantId, j.runId);
+    },
+    [QUEUES.scheduleAudit]: (d) => (fanOut.parse(d), scheduleAudits(c, (t) => hasFeature(c, t, 'audit_copilot'))),
   };
 }

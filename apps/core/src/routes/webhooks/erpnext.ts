@@ -5,6 +5,7 @@ import type { Container } from '../../container.js';
 import { decrypt } from '../../lib/crypto.js';
 import { withSystemTx } from '../../lib/db.js';
 import { LIFECYCLE_DOCTYPES, LIFECYCLE_EVENTS } from '../../modules/lifecycle/events.js';
+import { onSalesInvoiceSubmitted } from '../../modules/einvoice/service.js';
 import { claimEvent, markProcessed } from '../../modules/webhooks/idempotency.js';
 import { verifyFrappe } from '../../modules/webhooks/verify.js';
 
@@ -50,7 +51,7 @@ export const erpnextWebhook =
       if (!claim.first) return { status: 'duplicate' };
       if (event === 'on_submit') {
         if (doctype === 'Sales Invoice') {
-          await c.queue.enqueue(QUEUES.outboundInvoice, { tenantId: tenant.id, invoiceName: name, source: 'erpnext' }, { jobId: `inv-${tenant.id}-${name}` });
+          await onSalesInvoiceSubmitted(c, tenant, name, { send: true, source: 'erpnext' });
         } else if (p.data.payment_type === 'Receive') {
           await c.queue.enqueue(QUEUES.outboundReceipt, { tenantId: tenant.id, paymentName: name, source: 'erpnext' }, { jobId: `rcpt-${tenant.id}-${name}` });
         }

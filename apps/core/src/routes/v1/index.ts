@@ -10,6 +10,7 @@ import { bankRoutes } from './bank.js';
 import { portalRoutes } from './portal.js';
 import { lifecycleRoutes } from './lifecycle.js';
 import { officeRoutes } from './office.js';
+import { intelligenceRoutes } from './intelligence.js';
 
 export const v1Routes =
   (c: Container): FastifyPluginAsyncZod =>
@@ -28,5 +29,6 @@ export const v1Routes =
       await authed.register(portalRoutes(c));
       await authed.register(lifecycleRoutes(c));
       await authed.register(officeRoutes(c));
+      await authed.register(intelligenceRoutes(c));
     });
   };

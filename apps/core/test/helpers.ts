@@ -9,6 +9,7 @@ import { MockLlm, MockStt, MockVision } from '../src/ai/mock.js';
 import type { Container } from '../src/container.js';
 import { createPrisma, withSystemTx } from '../src/lib/db.js';
 import { MemoryJobQueue } from '../src/lib/queue.js';
+import { SandboxGateway } from '../src/modules/einvoice/gateway.js';
 import { FakeProvisionerClient } from '../src/modules/provisioning/provisioner-client.js';
 import { sealCwBotToken, sealErpKey, sealErpSecret } from '../src/modules/tenants/secrets.js';
 import { MemoryMailer } from '../src/modules/email/mailer.js';
@@ -22,6 +23,7 @@ export interface TestContainer extends Container {
   payments: FakePaymentProvider;
   provisioner: FakeProvisionerClient;
   mailer: MemoryMailer;
+  einvoice: SandboxGateway;
   erps: Map<string, FakeErpClient>;
   cws: Map<string, FakeChatwootClient>;
   rzps: Map<string, FakeRazorpayClient>;
@@ -50,6 +52,7 @@ export function testContainer(): TestContainer {
     razorpay: (t: Tenant) => (t.rzpKeyId ? (rzps.get(t.id) ?? rzps.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined),
     provisioner: new FakeProvisionerClient(),
     mailer: new MemoryMailer(),
+    einvoice: new SandboxGateway(),
     erps,
     cws,
     rzps,

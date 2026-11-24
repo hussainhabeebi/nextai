@@ -37,6 +37,9 @@ export const TENANT_MODELS = new Set<string>([
   'Announcement',
   'Approval',
   'Meeting',
+  'AuditRun',
+  'AuditFinding',
+  'EInvoice',
 ]);
 
 const WHERE_OPS = new Set([

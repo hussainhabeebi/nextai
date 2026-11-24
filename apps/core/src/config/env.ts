@@ -74,6 +74,9 @@ export const envSchema = z.object({
   ADMIN_BOOTSTRAP_EMAIL: optionalEmail,
   ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
+  /** E-invoicing intermediary (GSP / Peppol AP / ZATCA). Unset = local sandbox, nothing is reported. */
+  EINVOICE_GATEWAY_URL: z.string().url().optional(),
+  EINVOICE_GATEWAY_TOKEN: z.string().optional(),
   /** Use in-memory fakes for ERPNext/Chatwoot (local dev without external systems). */
   MOCK_EXTERNALS: bool,
   DOCS_PUBLIC: bool,

@@ -17,6 +17,8 @@ import { NEW_PARTY, partyChoices, partyQuestion, resolveParty, type PartyKind, t
 import { booksContext } from '../reports/reports.js';
 import { answerQuestion, reportText } from '../reports/answers.js';
 import { parseQuestion } from '../../ai/question.js';
+import { hasFeature } from '../billing/gating.js';
+import { forecastSummary } from '../forecast/service.js';
 import { incrementUsage } from '../usage/usage.js';
 import { buildBriefing } from '../briefing/briefing.js';
 import { answerBankLine, askNextBankLine, importLines, linkDraftToBankLine, matchLines, tenantToday } from '../banking/service.js';
@@ -528,6 +530,10 @@ export async function runIntent(ctx: BotContext, rawIntent: IntentResult, opts: 
       return;
     }
     case 'request_report': {
+      if ((e.report as string | undefined) === 'cash_forecast') {
+        await say(ctx, (await hasFeature(c, tenant, 'cash_forecast')) ? await forecastSummary(c, tenant) : 'Cash forecasting is part of the Growth and Pro plans. Upgrade in the NextAi app → Billing.');
+        return;
+      }
       await say(ctx, await reportText(c, tenant, (e.report as ReportKey | undefined) ?? 'profit_and_loss', e.question ?? ''));
       return;
     }

@@ -1,4 +1,4 @@
-import { QUEUES, REPORT_NAMES, draftPayloadSchema, draftStatusSchema, isoDate, normalizePhone, tenantSettingsSchema, type Currency, type DraftPayload, type ReportKey } from '@nextai/shared';
+import { QUEUES, REPORT_NAMES, auditPolicySchema, draftPayloadSchema, eInvoicingSettingsSchema, forecastSettingsSchema, draftStatusSchema, isoDate, normalizePhone, tenantSettingsSchema, type Currency, type DraftPayload, type ReportKey } from '@nextai/shared';
 import type { Prisma } from '@prisma/client';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -14,6 +14,8 @@ import { booksContext, runReport } from '../../modules/reports/reports.js';
 import { incrementUsage } from '../../modules/usage/usage.js';
 import { tenantKey } from '../../storage/storage.js';
 import { assertWithinLimit, requireFeature } from '../../modules/billing/gating.js';
+import { eInvoiceSummary } from '../../modules/einvoice/service.js';
+import { cachedForecast } from '../../modules/forecast/service.js';
 import { inviteFor, sendInvite } from '../../modules/team/invite.js';
 
 const actorOf = (req: FastifyRequest) => ({ id: req.user!.sub, type: 'user' as const, channel: 'app' as const, ip: req.ip });
@@ -21,6 +23,20 @@ const requireOwner = (req: FastifyRequest) => {
   if (req.user!.role !== 'owner') throw forbidden('Only the business owner can do this');
 };
 const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * Patch shape for a settings group: every field optional and WITHOUT its default. (zod 4 applies defaults even
+ * inside .partial(), which would reset fields the client did not send.)
+ */
+function patchOf<S extends z.ZodRawShape>(schema: z.ZodObject<S>) {
+  const shape = Object.fromEntries(
+    Object.entries(schema.shape).map(([k, v]) => {
+      let inner = v as z.ZodType;
+      while (inner instanceof z.ZodDefault || inner instanceof z.ZodPrefault || inner instanceof z.ZodOptional) inner = inner.unwrap() as z.ZodType;
+      return [k, inner.optional()];
+    }),
+  );
+  return z.object(shape);
+}
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf', 'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4']);
 
 export const appRoutes =
@@ -46,6 +62,16 @@ export const appRoutes =
       const alerts: Array<{ kind: string; text: string }> = [];
       if (t.status === 'past_due') alerts.push({ kind: 'billing', text: 'Payment failed — update your card.' });
       if (pending) alerts.push({ kind: 'approvals', text: `${pending} item(s) need your approval.` });
+      // cheap signals only: cached forecast (no ERPNext call), DB counts
+      const [forecastNow, riskyFindings, einvoiceIssues] = await Promise.all([
+        cachedForecast(c, t).catch(() => undefined),
+        req.db!.auditFinding.count({ where: { status: 'open', severity: { in: ['high', 'critical'] } } }),
+        req.db!.eInvoice.count({ where: { status: { in: ['invalid', 'rejected', 'failed'] } } }),
+      ]);
+      if (forecastNow?.cashOutWeek) alerts.push({ kind: 'cash', text: `Cash may run out the week of ${forecastNow.cashOutWeek}. Open Cash forecast.` });
+      else if (forecastNow?.belowBufferWeek) alerts.push({ kind: 'cash', text: `Cash dips below your buffer the week of ${forecastNow.belowBufferWeek}.` });
+      if (riskyFindings) alerts.push({ kind: 'audit', text: `${riskyFindings} high-risk audit finding(s) to review.` });
+      if (einvoiceIssues) alerts.push({ kind: 'einvoice', text: `${einvoiceIssues} e-invoice(s) need attention before they can be issued.` });
       return {
         currency: t.currency as Currency,
         cash: a.balances?.cash ?? null,
@@ -660,7 +686,7 @@ export const appRoutes =
         t.country === 'IN'
           ? [{ name: 'GSTR-1', day: 11 }, { name: 'GSTR-3B', day: 20 }]
           : [{ name: 'VAT return (quarterly)', day: 28 }, { name: 'Corporate Tax return', day: 0 }];
-      return { regime: erpContext(t).settings.taxRegime, periods, dueDates };
+      return { regime: erpContext(t).settings.taxRegime, periods, dueDates, eInvoicing: await eInvoiceSummary(c, t) };
     });
 
     // ---------------- Ask your books ----------------
@@ -686,14 +712,28 @@ export const appRoutes =
       settings: tenantSettingsSchema
         .pick({ autoPost: true, reminders: true, dailySummary: true, taxId: true, bank: true, invoiceTemplate: true, autoSendInvoices: true, companyName: true, taxRegime: true, taxCalendar: true, paymentLinks: true, appView: true, appStyle: true, whatsappNumber: true })
         .partial()
+        .extend({
+          address: tenantSettingsSchema.shape.address.unwrap().optional(),
+          eInvoicing: patchOf(eInvoicingSettingsSchema).optional(),
+          auditPolicy: patchOf(auditPolicySchema).optional(),
+          forecast: patchOf(forecastSettingsSchema).optional(),
+        })
         .optional(),
     });
     app.patch('/settings', { schema: { tags: ['app'], body: settingsPatch } }, async (req) => {
       requireOwner(req);
       const t = req.tenant!;
-      const validated = tenantSettingsSchema.parse({ ...(t.settings as object), ...(req.body.settings ?? {}) });
+      const current = (t.settings ?? {}) as Record<string, unknown>;
+      const patch = (req.body.settings ?? {}) as Record<string, unknown>;
+      // nested groups merge one level deep so a partial update keeps the other fields
+      const nested = Object.fromEntries(
+        ['address', 'eInvoicing', 'auditPolicy', 'forecast', 'reminders', 'dailySummary', 'bank']
+          .filter((k) => patch[k] && typeof patch[k] === 'object')
+          .map((k) => [k, { ...((current[k] as object) ?? {}), ...(patch[k] as object) }]),
+      );
+      const validated = tenantSettingsSchema.parse({ ...current, ...patch, ...nested });
       // Keep keys the schema doesn't model (e.g. provisioning progress) instead of silently dropping them.
-      const merged = { ...(t.settings as object), ...validated };
+      const merged = { ...current, ...validated };
       const updated = await req.db!.tenant.update({
         where: { id: t.id },
         data: { name: req.body.name, language: req.body.language, settings: merged as Prisma.InputJsonValue },

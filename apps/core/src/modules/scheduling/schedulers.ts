@@ -114,4 +114,6 @@ export const SCHEDULE_QUEUES = {
   [QUEUES.lifecycleScan]: '*/5 * * * *',
   [QUEUES.officeTick]: '*/5 * * * *',
   [QUEUES.reportAdminDaily]: '10 4 * * *', // 08:10 Dubai / 09:40 India
+  // weekly full-population audit, Mondays 03:10 UTC
+  [QUEUES.scheduleAudit]: '10 3 * * 1',
 } as const;

@@ -13,13 +13,13 @@ export const DEFAULT_PLANS: Array<{ code: PlanCode; name: string; priceMonthly: 
     code: 'base',
     name: 'Base',
     priceMonthly: { AED: 99, INR: 799 },
-    limits: { users: 1, ocrPagesPerMonth: 200, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: [] },
+    limits: { users: 1, ocrPagesPerMonth: 200, invoicesSentPerMonth: 50, messagesPerMonth: 1000, features: ['e_invoicing'] },
   },
   {
     code: 'growth',
     name: 'Growth',
     priceMonthly: { AED: 299, INR: 1999 },
-    limits: { users: 4, ocrPagesPerMonth: 1000, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books'] },
+    limits: { users: 4, ocrPagesPerMonth: 1000, invoicesSentPerMonth: 300, messagesPerMonth: 5000, features: ['tax_centre', 'ask_books', 'e_invoicing', 'cash_forecast'] },
   },
   {
     code: 'pro',
@@ -30,7 +30,7 @@ export const DEFAULT_PLANS: Array<{ code: PlanCode; name: string; priceMonthly: 
       ocrPagesPerMonth: 5000,
       invoicesSentPerMonth: 2000,
       messagesPerMonth: 20000,
-      features: ['tax_centre', 'ask_books', 'multi_currency', 'api_access'],
+      features: ['tax_centre', 'ask_books', 'multi_currency', 'api_access', 'e_invoicing', 'cash_forecast', 'audit_copilot'],
     },
   },
 ];

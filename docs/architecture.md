@@ -114,3 +114,64 @@ Helmet, CORS allowlist with credentials, global + per-tenant rate limits, Zod va
 signed webhooks (Chatwoot HMAC/token + IP allowlist, Frappe HMAC per tenant, Stripe signature), encrypted
 tenant secrets, RLS, PII-safe pino logs (phones, emails, tokens, secrets redacted), audit log for money and
 settings changes, provisioner limited to whitelisted argv (no shell), dependency audit in CI.
+
+## AI accounting features
+
+All three live in `apps/core/src/modules/*`, are tenant-scoped (RLS on `audit_runs`, `audit_findings`,
+`einvoices`) and plan-gated (`e_invoicing` on every plan, `cash_forecast` from Growth, `audit_copilot` on Pro).
+
+### Audit Copilot (`audit-copilot/`)
+
+`POST /v1/audit/runs` queues `audit.run`; `schedule.audit` runs a rolling 12-month audit weekly.
+The job pages through **every** submitted Purchase Invoice, Sales Invoice (incl. cancelled, for sequence
+testing), Payment Entry and Journal Entry for the period and runs pure, versioned tests (`rules.ts`):
+
+| Rule | What it catches |
+|---|---|
+| `duplicate_bill`, `duplicate_payment`, `duplicate_amount` | same supplier bill no. twice; same party + amount within N days |
+| `cash_payment_limit` / `cash_receipt_limit` | IN Sec 40A(3) (₹10,000 / payee / day) and Sec 269ST (₹2 lakh); policy limits elsewhere |
+| `split_transaction` | several same-day payments just under the approval threshold |
+| `missing_tax_id`, `invalid_tax_id` | input tax claimed without a valid GSTIN / TRN |
+| `invoice_sequence_gap` | missing numbers in a sales-invoice series (GST Rule 46 / UAE Art. 59) |
+| `amount_outlier` | robust z-score (median/MAD) per party |
+| `benford_deviation` | first-digit test, Nigrini MAD thresholds (n ≥ 100) |
+| `round_amount`, `weekend_posting`, `new_vendor_large_payment` | classic fraud indicators |
+
+Evidence: each finding stores the rule version, parameters, observed values and a snapshot of every tested
+document. A run stores `datasetHash` (canonical population) and `evidenceHash = sha256(prevHash | datasetHash |
+findingsHash)`, chaining runs so stored evidence cannot be silently rewritten (the app role cannot DELETE runs or
+findings). Decisions (resolve / dismiss with a mandatory reason) are audited and carried forward by fingerprint.
+The LLM writes a plain-language summary from the findings only. `GET /v1/audit/runs/:id/workpaper[?format=csv]`
+exports the evidence pack.
+
+### Cash-flow forecast (`forecast/`)
+
+13-week forecast (`engine.ts`, pure and seeded). Inputs are read from ERPNext once and cached in Redis for the day:
+opening cash + bank; open AR/AP; each customer's payment delay learned by FIFO-matching 24 months of payments to
+invoices; monthly cash history → run-rate, seasonal index (≥ 12 months) and volatility; macro factors (inflation,
+demand growth; per-country defaults, overridable in settings). Receivables land at due date + learned delay,
+weighted by an ageing-based collection probability; run-rate flows ramp in after the collection/payment cycle so
+they don't double-count open AR/AP. 500 Monte Carlo paths give the p10–p90 band and the shortfall probability.
+`POST /v1/forecast/simulate` compares base vs a what-if (collection/payment delays, sales/expense change,
+defaulting customers, one-offs, monthly recurring) on identical inputs. The dashboard raises a cash alert from
+the cached forecast; WhatsApp "cash forecast" returns a summary.
+
+### E-invoicing (`einvoice/`)
+
+When `settings.eInvoicing.enabled`, a submitted Sales Invoice (bot posting or ERPNext webhook) goes to
+`einvoice.submit` **before** the customer copy is sent:
+
+ERPNext invoice → scheme-neutral model → validation → document → storage → gateway → IRN/UUID, QR → write-back →
+`outbound.invoice`.
+
+- **India (`in_irp`)**: IRP e-invoice JSON v1.1, IRN = SHA-256(GSTIN + FY + type + number), HSN, place-of-supply
+  and CGST/SGST vs IGST checks; IRN / Ack / signed QR written back to India Compliance fields; cancel only within
+  24 h; B2C skipped.
+- **UAE (`ae_peppol`)**: UBL 2.1 on the PINT AE profile, TRN and 5% VAT checks, stable UUID per invoice.
+- **KSA (`sa_zatca`)**: UBL 2.1 with ICV counter, previous-invoice-hash chain (genesis PIH per spec) and TLV QR
+  (tags 1–6). The queue is serialized per tenant so counters and chains stay gap-free.
+
+Invalid invoices are held with field-level messages (dashboard + `/einvoices`); gateway outages retry with
+backoff; rejections are recorded and audited. Transport is `EInvoiceGateway`: `HttpGateway`
+(`EINVOICE_GATEWAY_URL` / `EINVOICE_GATEWAY_TOKEN`, a neutral JSON contract for a GSP, a Peppol access point or a
+ZATCA-onboarded service) or the default `SandboxGateway`, which validates and simulates but reports nothing.

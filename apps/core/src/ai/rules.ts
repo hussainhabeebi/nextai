@@ -273,6 +273,10 @@ function classifyMessage(text: string): IntentResult | undefined {
     return { intent: 'request_report', confidence: 0.9, entities: { report: key, question: text.trim() } };
   }
 
+  if (!/^(i |we )?(paid|spent|bought|purchased|sold|sale)\b/.test(t) && /\b(cash ?flow forecast|cash forecast|forecast|runway|will (i|we) run out)\b/.test(t)) {
+    return { intent: 'request_report', confidence: 0.9, entities: { report: 'cash_forecast' } };
+  }
+
   if (/\bremind\b/.test(t)) {
     const party = t.match(/remind\s+(.+)$/)?.[1]?.trim();
     return { intent: 'send_reminder', confidence: 0.85, entities: { party } };

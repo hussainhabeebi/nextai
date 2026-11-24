@@ -57,6 +57,48 @@ export const officeSettingsSchema = z.object({
 });
 export type OfficeSettings = z.infer<typeof officeSettingsSchema>;
 
+export const EINVOICE_SCHEMES = ['in_irp', 'ae_peppol', 'sa_zatca'] as const;
+export type EInvoiceScheme = (typeof EINVOICE_SCHEMES)[number];
+
+export const eInvoicingSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Defaults by country: IN → in_irp, AE → ae_peppol. */
+  scheme: z.enum(EINVOICE_SCHEMES).optional(),
+  /** Submit automatically when a sales invoice is posted / submitted in ERPNext. */
+  autoSubmit: z.boolean().default(true),
+  /** IN: B2C invoices are exempt from IRP (only B2B/export). */
+  includeB2C: z.boolean().default(false),
+  /** Peppol participant id of the seller, e.g. "0235:100123456700003". */
+  peppolId: z.string().optional(),
+});
+
+export const auditPolicySchema = z.object({
+  /** Single cash payment above this is a policy breach (IN default: Sec 40A(3) ₹10,000). */
+  maxCashPayment: z.number().positive().optional(),
+  /** Cash received from one party in one day above this (IN default: Sec 269ST ₹2,00,000). */
+  maxCashReceiptPerDay: z.number().positive().optional(),
+  /** Transactions at or above this need a second approver. */
+  approvalThreshold: z.number().positive().optional(),
+  /** Purchases above this must carry the supplier's GSTIN/TRN. */
+  taxIdRequiredAbove: z.number().nonnegative().optional(),
+  /** Robust z-score above which an amount is an outlier. */
+  outlierZ: z.number().min(2).max(10).default(3.5),
+  /** Day window for near-duplicate detection. */
+  duplicateWindowDays: z.number().int().min(0).max(30).default(3),
+  flagWeekends: z.boolean().default(true),
+  weeklyRun: z.boolean().default(true),
+});
+export type AuditPolicy = z.infer<typeof auditPolicySchema>;
+
+export const forecastSettingsSchema = z.object({
+  /** Annual inflation applied to run-rate expenses (macro signal). Defaults by country. */
+  inflationPct: z.number().min(-20).max(100).optional(),
+  /** Expected annual demand growth applied to run-rate sales (macro signal). */
+  demandGrowthPct: z.number().min(-100).max(500).optional(),
+  /** Cash balance below which a low-cash alert is raised. */
+  minCashBuffer: z.number().nonnegative().default(0),
+});
+
 export const tenantSettingsSchema = z.object({
   taxRegime: z.enum(['gst_regular', 'gst_composition', 'vat', 'vat_ct', 'none']).default('gst_regular'),
   /** Which filings apply, for deadline warnings. */
@@ -108,6 +150,21 @@ export const tenantSettingsSchema = z.object({
   appView: z.enum(APP_VIEWS).default('general'),
   /** Colour theme of the customer app. */
   appStyle: z.enum(APP_STYLES).default('teal'),
+  /** Registered business address (required on e-invoices). */
+  address: z
+    .object({
+      line1: z.string(),
+      line2: z.string(),
+      city: z.string(),
+      postalCode: z.string(),
+      /** IN: 2-digit GST state code; AE: emirate code (DU, AZ, SH, AJ, UQ, RK, FU) */
+      stateCode: z.string(),
+    })
+    .partial()
+    .prefault({}),
+  eInvoicing: eInvoicingSettingsSchema.prefault({}),
+  auditPolicy: auditPolicySchema.prefault({}),
+  forecast: forecastSettingsSchema.prefault({}),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 
@@ -260,3 +317,26 @@ export const tenantCreateSchema = z.object({
   ownerEmail: z.string().email().optional(),
 });
 export type TenantCreate = z.infer<typeof tenantCreateSchema>;
+
+// ---------------- Cash-flow what-if ----------------
+export const forecastScenarioSchema = z.object({
+  name: z.string().max(80).optional(),
+  /** Extra days every customer takes to pay (negative = faster). */
+  collectionDelayDays: z.number().int().min(-60).max(180).default(0),
+  /** Extra days we take to pay suppliers. */
+  payablesDelayDays: z.number().int().min(-60).max(180).default(0),
+  /** Change in run-rate sales, percent. */
+  salesChangePct: z.number().min(-100).max(500).default(0),
+  /** Change in run-rate expenses, percent. */
+  expenseChangePct: z.number().min(-100).max(500).default(0),
+  /** Customers assumed never to pay (default / churn). */
+  defaultingCustomers: z.array(z.string().max(140)).max(50).default([]),
+  /** One-off inflows (+) or outflows (−), e.g. a loan, a capex purchase, a new hire's salary. */
+  oneOffs: z
+    .array(z.object({ date: isoDate, amount: z.number().finite(), label: z.string().max(80) }))
+    .max(50)
+    .default([]),
+  /** Recurring monthly change (+/−), e.g. a new hire: −15000. */
+  monthlyRecurring: z.array(z.object({ amount: z.number().finite(), label: z.string().max(80), startDate: isoDate.optional() })).max(20).default([]),
+});
+export type ForecastScenario = z.infer<typeof forecastScenarioSchema>;

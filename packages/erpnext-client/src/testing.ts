@@ -40,12 +40,13 @@ export class FakeErpClient implements ErpClient {
     } else if (Array.isArray(opts.filters)) {
       for (const [k, op, v] of opts.filters) {
         if (op === '=') rows = rows.filter((r) => r[k] === v);
-        if (op === '>') rows = rows.filter((r) => Number(r[k]) > Number(v));
-        if (op === '<=') rows = rows.filter((r) => String(r[k]) <= String(v));
-        if (op === '<') rows = rows.filter((r) => String(r[k]) < String(v));
+        const cmp = (a: unknown, b: unknown) => (typeof b === 'number' ? Number(a) - b : String(a ?? '').localeCompare(String(b)));
         if (op === '!=') rows = rows.filter((r) => r[k] !== v);
-        if (op === '>=') rows = rows.filter((r) => String(r[k]) >= String(v));
-        if (op === 'between' && Array.isArray(v)) rows = rows.filter((r) => String(r[k]) >= String(v[0]) && String(r[k]) <= String(v[1]));
+        if (op === '>') rows = rows.filter((r) => cmp(r[k], v) > 0);
+        if (op === '>=') rows = rows.filter((r) => cmp(r[k], v) >= 0);
+        if (op === '<') rows = rows.filter((r) => cmp(r[k], v) < 0);
+        if (op === '<=') rows = rows.filter((r) => cmp(r[k], v) <= 0);
+        if (op === 'between' && Array.isArray(v)) rows = rows.filter((r) => cmp(r[k], v[0]) >= 0 && cmp(r[k], v[1]) <= 0);
         if (op === 'in' && Array.isArray(v)) rows = rows.filter((r) => v.includes(r[k]));
         if (op === 'like' && typeof v === 'string') {
           const needle = v.replace(/%/g, '').toLowerCase();

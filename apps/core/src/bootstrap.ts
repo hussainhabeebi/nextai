@@ -9,6 +9,7 @@ import { createPrisma } from './lib/db.js';
 import { BullJobQueue } from './lib/queue.js';
 import { chatwootClientFor } from './modules/chatwoot/factory.js';
 import { erpClientFor } from './modules/erpnext/factory.js';
+import { HttpGateway, SandboxGateway } from './modules/einvoice/gateway.js';
 import { FakeProvisionerClient, HttpProvisionerClient } from './modules/provisioning/provisioner-client.js';
 import { MemoryMailer, ResendMailer } from './modules/email/mailer.js';
 import { RedisConversationStore } from './state/conversation.js';
@@ -51,6 +52,7 @@ export function createContainer(): Container & { close: () => Promise<void> } {
     razorpay: e.MOCK_EXTERNALS
       ? (t) => (t.rzpKeyId ? (fakeRzp.get(t.id) ?? fakeRzp.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined)
       : razorpayClientFor,
+    einvoice: e.EINVOICE_GATEWAY_URL && e.EINVOICE_GATEWAY_TOKEN ? new HttpGateway(e.EINVOICE_GATEWAY_URL, e.EINVOICE_GATEWAY_TOKEN) : new SandboxGateway(),
     provisioner: e.PROVISIONER_URL && e.PROVISIONER_SECRET ? new HttpProvisionerClient(e.PROVISIONER_URL, e.PROVISIONER_SECRET) : new FakeProvisionerClient(),
     mailer: e.RESEND_API_KEY ? new ResendMailer(e.RESEND_API_KEY, e.MAIL_FROM) : new MemoryMailer(e.MAIL_FROM, false),
     close: async () => {

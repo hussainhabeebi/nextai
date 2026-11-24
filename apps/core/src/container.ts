@@ -7,6 +7,7 @@ import type { AiProviders } from './ai/index.js';
 import type { ConversationStore } from './state/conversation.js';
 import type { ObjectStorage } from './storage/storage.js';
 import type { JobQueue } from './lib/queue.js';
+import type { EInvoiceGateway } from './modules/einvoice/gateway.js';
 import type { ProvisionerClient } from './modules/provisioning/provisioner-client.js';
 import type { Mailer } from './modules/email/mailer.js';
 import type { RazorpayClient } from './modules/razorpay/client.js';
@@ -28,4 +29,6 @@ export interface Container {
   razorpay: (tenant: Tenant) => RazorpayClient | undefined;
   provisioner: ProvisionerClient;
   mailer: Mailer;
+  /** Tax-authority transport (GSP / Peppol access point / ZATCA); sandbox when not configured. */
+  einvoice: EInvoiceGateway;
 }

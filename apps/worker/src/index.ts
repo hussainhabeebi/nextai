@@ -18,6 +18,9 @@ const QUEUE_CONFIG: Partial<Record<QueueName, { concurrency: number; limiter?: {
   [QUEUES.outboundInvoice]: { concurrency: 4, limiter: { max: 80, duration: 60_000 }, perTenant: 2 },
   [QUEUES.outboundReceipt]: { concurrency: 4, limiter: { max: 80, duration: 60_000 }, perTenant: 2 },
   [QUEUES.outboundReminder]: { concurrency: 4, limiter: { max: 80, duration: 60_000 }, perTenant: 2 },
+  // serialized per tenant so ZATCA counters / hash chains stay gap-free
+  [QUEUES.einvoiceSubmit]: { concurrency: 4, limiter: { max: 100, duration: 60_000 }, perTenant: 1 },
+  [QUEUES.auditRun]: { concurrency: 2, perTenant: 1 },
 };
 
 const deadLetter = new Queue(QUEUES.deadLetter, { connection });

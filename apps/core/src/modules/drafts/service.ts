@@ -7,6 +7,7 @@ import { conflict, notFound } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { parseDate } from '../../ai/rules.js';
 import { audit } from '../audit/audit.js';
+import { onSalesInvoiceSubmitted } from '../einvoice/service.js';
 import { DOCTYPE_FOR, applyTaxTemplate, erpContext, partyDoc, partyPlacement, resolveAccounts, toErpDoc } from '../erpnext/mappers.js';
 import { createLedger, type LedgerKind } from '../erpnext/create-account.js';
 
@@ -268,8 +269,9 @@ export async function postDraft(c: Container, tenantId: string, draftId: string)
     if ((draft.type === 'purchase_invoice' || draft.type === 'journal_entry') && !p.isReturn && p.partyName && p.expenseAccount) {
       await learnVendor(c, tenantId, p.partyName, p.partyTaxId, p.expenseAccount, p.taxTemplate);
     }
-    if (draft.type === 'sales_invoice' && !p.isReturn && ctx.settings.autoSendInvoices) {
-      await c.queue.enqueue(QUEUES.outboundInvoice, { tenantId, invoiceName: erpName, draftId, source: 'nextai' }, { jobId: `inv-${tenantId}-${erpName}` });
+    if (draft.type === 'sales_invoice') {
+      // with e-invoicing on, the customer copy is released only after the IRN / UUID is issued (credit notes are registered, not sent)
+      await onSalesInvoiceSubmitted(c, tenant, erpName, { send: !p.isReturn && ctx.settings.autoSendInvoices, draftId, source: 'nextai' });
     }
     if (draft.conversationId) {
       await c.chatwoot(tenant).sendText(draft.conversationId, t(lang, 'bot.confirmed', { ref: erpName }));
