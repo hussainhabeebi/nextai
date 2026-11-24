@@ -31,6 +31,8 @@ export class FakeErpClient implements ErpClient {
 
   async list<T = ErpDoc>(doctype: string, opts: ListOptions = {}): Promise<T[]> {
     this.check('list', [doctype, opts]);
+    const fn = (opts.fields ?? []).find((f) => /\(/.test(f));
+    if (fn) throw new Error(`SQL functions are not allowed as strings in SELECT: ${fn}`); // as current Frappe
     let rows = [...this.table(doctype).values()];
     if (opts.filters && !Array.isArray(opts.filters)) {
       const f = opts.filters;
@@ -69,7 +71,7 @@ export class FakeErpClient implements ErpClient {
       .map((w) => w[0])
       .join('')
       .toUpperCase();
-    const name = (doc.name as string) ?? (doc.customer_name as string) ?? (doc.supplier_name as string) ?? `${prefix}-${++this.seq}`;
+    const name = (doc.name as string) ?? (doc.customer_name as string) ?? (doc.supplier_name as string) ?? (doc.company_name as string) ?? `${prefix}-${++this.seq}`;
     const created: ErpDoc = { ...doc, name, doctype, docstatus: 0 };
     this.table(doctype).set(name, created);
     return created as T;
@@ -88,6 +90,12 @@ export class FakeErpClient implements ErpClient {
 
   async cancel(doctype: string, name: string): Promise<void> {
     await this.update(doctype, name, { docstatus: 2 });
+  }
+
+  async assign(doctype: string, name: string, users: string[], description?: string): Promise<void> {
+    this.check('assign', [doctype, name, users, description]);
+    const d = await this.get(doctype, name);
+    d._assign = JSON.stringify(users);
   }
 
   async uploadFile(file: { filename: string; content: Uint8Array; mime: string }, attachTo?: { doctype: string; name: string }) {

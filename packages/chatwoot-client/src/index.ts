@@ -47,6 +47,8 @@ export interface ChatwootClient {
   sendChoices(conversationId: number, prompt: string, options: ChoiceOption[]): Promise<{ id: number }>;
   findOrCreateContact(phone: string, name: string): Promise<{ contactId: number; sourceId: string }>;
   createConversation(contactId: number, sourceId: string): Promise<{ conversationId: number }>;
+  /** Most recently active conversation of this contact in our inbox (any status), or null. */
+  findLatestConversation(contactId: number): Promise<{ conversationId: number; status?: string } | null>;
   addLabels(conversationId: number, labels: string[]): Promise<void>;
   toggleStatus(conversationId: number, status: 'open' | 'pending' | 'resolved'): Promise<void>;
   downloadAttachment(dataUrl: string): Promise<{ content: Uint8Array; mime: string }>;
@@ -191,6 +193,16 @@ export class HttpChatwootClient implements ChatwootClient {
     return { conversationId: conv.id };
   }
 
+  async findLatestConversation(contactId: number) {
+    const res = await this.call<{ payload?: Array<{ id: number; inbox_id?: number; status?: string; last_activity_at?: number }> }>(
+      `/contacts/${contactId}/conversations`,
+    );
+    const mine = (Array.isArray(res.payload) ? res.payload : []).filter((c) => c.inbox_id === this.creds.inboxId);
+    if (mine.length === 0) return null;
+    const latest = mine.reduce((a, b) => ((b.last_activity_at ?? b.id) > (a.last_activity_at ?? a.id) ? b : a));
+    return { conversationId: latest.id, status: latest.status };
+  }
+
   async addLabels(conversationId: number, labels: string[]) {
     await this.post(`/conversations/${conversationId}/labels`, { labels });
   }
@@ -234,7 +246,7 @@ export const chatwootWebhookSchema = z
     content: z.string().nullable().optional(),
     message_type: z.union([z.string(), z.number()]).optional(),
     content_type: z.string().nullable().optional(),
-    content_attributes: z.record(z.unknown()).nullable().optional(),
+    content_attributes: z.record(z.string(), z.unknown()).nullable().optional(),
     private: z.boolean().optional(),
     created_at: z.union([z.string(), z.number()]).optional(),
     account: z.object({ id: z.number() }).passthrough().optional(),

@@ -15,6 +15,7 @@ import { audit } from '../../modules/audit/audit.js';
 import { signAccess } from '../../modules/auth/tokens.js';
 import { CHOICES, confirmDraft, getDraft, summaryText, updateDraftPayload } from '../../modules/drafts/service.js';
 import { PROVISION_STEPS, runProvisionStep } from '../../modules/provisioning/wizard.js';
+import { retryOwnSite } from '../../modules/provisioning/own-site.js';
 import { createTenantRecord } from '../../modules/tenants/service.js';
 import { currentPeriod } from '../../modules/usage/usage.js';
 import { planLimits } from '../../modules/billing/gating.js';
@@ -100,7 +101,7 @@ export const platformRoutes =
         users: tenant.users.map((u) => ({ id: u.id, name: u.name, phone: u.phone, role: u.role, status: u.status, lastLoginAt: u.lastLoginAt })),
         connections: {
           erpnext: { configured: !!(erpApiKeyEnc && erpApiSecretEnc), siteUrl: tenant.erpSiteUrl, health: health ? JSON.parse(health) : null },
-          chatwoot: { configured: !!cwBotTokenEnc, accountId: tenant.cwAccountId, inboxId: tenant.cwInboxId },
+          chatwoot: { configured: !!cwBotTokenEnc, accountId: tenant.cwAccountId, inboxId: tenant.cwInboxId, staffInboxId: tenant.cwStaffInboxId },
           erpWebhook: { configured: !!erpWebhookSecretEnc },
         },
         limits: await planLimits(c, tenant),
@@ -118,7 +119,7 @@ export const platformRoutes =
 
     app.patch(
       '/tenants/:id/settings',
-      { ...superOnly, schema: { tags: ['admin'], params: uuidParam, body: z.object({ settings: z.record(z.unknown()), planCode: z.enum(PLAN_CODES).optional() }) } },
+      { ...superOnly, schema: { tags: ['admin'], params: uuidParam, body: z.object({ settings: z.record(z.string(), z.unknown()), planCode: z.enum(PLAN_CODES).optional() }) } },
       async (req) => {
         const before = await sys((tx) => tx.tenant.findUniqueOrThrow({ where: { id: req.params.id } }));
         const plan = req.body.planCode ? await c.prisma.plan.findUnique({ where: { code: req.body.planCode } }) : null;
@@ -138,6 +139,17 @@ export const platformRoutes =
       return { accessToken, url: `${env().APP_URL}/#imp=${accessToken}` };
     });
 
+    /** Website signup whose own ERPNext site failed to build: try again (finished steps are skipped). */
+    app.post('/tenants/:id/retry-setup', { ...ops, schema: { tags: ['admin'], params: uuidParam } }, async (req) => {
+      const t = await sys((tx) => tx.tenant.findUnique({ where: { id: req.params.id } }));
+      if (!t) throw notFound('Tenant');
+      const mode = (t.settings as { erpSetup?: { mode?: string } } | null)?.erpSetup?.mode;
+      if (mode !== 'site') throw badRequest('This business was not set up with its own ERPNext site');
+      await retryOwnSite(c, t.id);
+      await adminAudit(req, 'provision.retry_setup', 'tenant', t.id, undefined, undefined, t.id);
+      return { queued: true };
+    });
+
     // ---------------- Provisioning ----------------
     app.post('/provision', { ...superOnly, schema: { tags: ['admin'], body: tenantCreateSchema } }, async (req, reply) => {
       const exists = await sys((tx) => tx.tenant.findUnique({ where: { slug: req.body.slug } }));
@@ -154,7 +166,7 @@ export const platformRoutes =
         schema: {
           tags: ['admin'],
           params: z.object({ id: z.string().uuid(), step: z.enum(PROVISION_STEPS) }),
-          body: z.object({ chatwoot: z.object({ accountId: z.number().int(), inboxId: z.number().int(), botToken: z.string().min(8) }).optional() }).default({}),
+          body: z.object({ chatwoot: z.object({ accountId: z.number().int(), inboxId: z.number().int(), botToken: z.string().min(8) }).optional() }).prefault({}),
         },
       },
       async (req) => {
@@ -246,7 +258,7 @@ export const platformRoutes =
     app.get('/plans', { ...anyAdmin, schema: { tags: ['admin'] } }, async () => ({ items: await c.prisma.plan.findMany({ orderBy: { code: 'asc' } }) }));
     app.patch(
       '/plans/:code',
-      { ...superOnly, schema: { tags: ['admin'], params: z.object({ code: z.enum(PLAN_CODES) }), body: z.object({ name: z.string().optional(), priceMonthly: z.record(z.number()).optional(), limits: planLimitsSchema.optional(), providerPriceIds: z.record(z.record(z.string())).optional(), active: z.boolean().optional() }) } },
+      { ...superOnly, schema: { tags: ['admin'], params: z.object({ code: z.enum(PLAN_CODES) }), body: z.object({ name: z.string().optional(), priceMonthly: z.record(z.string(), z.number()).optional(), limits: planLimitsSchema.optional(), providerPriceIds: z.record(z.string(), z.record(z.string(), z.string())).optional(), active: z.boolean().optional() }) } },
       async (req) => {
         const before = await c.prisma.plan.findUniqueOrThrow({ where: { code: req.params.code } });
         const after = await c.prisma.plan.update({ where: { code: req.params.code }, data: req.body });
@@ -268,7 +280,7 @@ export const platformRoutes =
     app.get('/templates', { ...anyAdmin, schema: { tags: ['admin'] } }, async () => ({ items: await c.prisma.messageTemplate.findMany({ orderBy: [{ key: 'asc' }, { language: 'asc' }] }) }));
     app.put(
       '/templates',
-      { ...superOnly, schema: { tags: ['admin'], body: z.object({ key: z.string().min(2), name: z.string().min(2), language: z.enum(['en', 'ml', 'ar']), params: z.array(z.string()), category: z.string().default('UTILITY') }) } },
+      { ...superOnly, schema: { tags: ['admin'], body: z.object({ key: z.string().min(2), name: z.string().min(2), language: z.enum(['en', 'ml', 'ar']), params: z.array(z.string()), category: z.string().default('UTILITY'), approved: z.boolean().optional() }) } },
       async (req) => {
         const r = await c.prisma.messageTemplate.upsert({ where: { key_language: { key: req.body.key, language: req.body.language } }, update: req.body, create: req.body });
         await adminAudit(req, 'template.upsert', 'template', r.id, undefined, req.body);

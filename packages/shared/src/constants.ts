@@ -17,6 +17,11 @@ export type UserRole = (typeof USER_ROLES)[number];
 export const PLATFORM_ROLES = ['super_admin', 'reviewer', 'support'] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 
+export const APP_VIEWS = ['general', 'clinic', 'pharmacy'] as const;
+export type AppView = (typeof APP_VIEWS)[number];
+export const APP_STYLES = ['teal', 'blue', 'green', 'violet', 'rose', 'slate'] as const;
+export type AppStyle = (typeof APP_STYLES)[number];
+
 export const DRAFT_TYPES = ['purchase_invoice', 'journal_entry', 'sales_invoice', 'payment_in', 'payment_out'] as const;
 export type DraftType = (typeof DRAFT_TYPES)[number];
 
@@ -36,13 +41,29 @@ export const INTENTS = [
   'record_sale',
   'payment_in',
   'payment_out',
+  'record_purchase',
+  'sales_return',
+  'purchase_return',
+  'transfer',
   'ask_books',
   'request_report',
   'send_reminder',
   'add_party',
+  'add_account',
+  'add_employee',
+  'briefing',
+  'bank',
   'help',
 ] as const;
 export type Intent = (typeof INTENTS)[number];
+
+/** What "create an account" can mean: a party (customer/supplier) or a ledger in the chart of accounts. */
+export const ACCOUNT_KINDS = [
+  'customer', 'supplier', // parties
+  'expense', 'direct_expense', 'income', 'direct_income', 'bank', 'cash', 'capital', // ledgers in the chart of accounts
+  'liability', 'loan', 'tax', 'asset', 'fixed_asset', 'loan_advance', 'stock', 'investment',
+] as const;
+export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 export const PLAN_CODES = ['base', 'growth', 'pro'] as const;
 export type PlanCode = (typeof PLAN_CODES)[number];
@@ -69,9 +90,16 @@ export const QUEUES = {
   outboundReminder: 'outbound.reminder',
   scheduleReminders: 'schedule.reminders',
   scheduleDailySummary: 'schedule.daily_summary',
+  scheduleDeadlines: 'schedule.deadlines',
+  bankStatement: 'bank.statement',
   usageRollup: 'usage.rollup',
   billingSync: 'billing.sync',
   healthErpnext: 'health.erpnext',
+  lifecycleEvent: 'lifecycle.event',
+  lifecycleScan: 'lifecycle.scan',
+  officeTick: 'office.tick',
+  reportAdminDaily: 'report.admin_daily',
+  tenantSetup: 'tenant.setup',
   einvoiceSubmit: 'einvoice.submit',
   auditRun: 'audit.run',
   scheduleAudit: 'schedule.audit',
@@ -86,3 +114,9 @@ export const SMALL_EXPENSE_THRESHOLD: Record<Currency, number> = { INR: 2000, AE
 export const CONVERSATION_TTL_SECONDS = 60 * 60 * 24;
 export const OTP_TTL_SECONDS = 300;
 export const OTP_MAX_ATTEMPTS = 5;
+
+/** Lead-to-customer lifecycle (mirrors the Prisma enums LifecycleRole / ReminderAudience). */
+export const LIFECYCLE_ROLES = ['sales', 'accountant', 'collections', 'onboarding', 'qa', 'support', 'ai_manager', 'management'] as const;
+export type LifecycleRoleName = (typeof LIFECYCLE_ROLES)[number];
+export const REMINDER_AUDIENCES = ['owner', 'escalation', 'customer', 'management'] as const;
+export type ReminderAudienceName = (typeof REMINDER_AUDIENCES)[number];

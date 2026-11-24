@@ -74,6 +74,21 @@ with exponential backoff; corrections are cancel + amend, never delete.
   (offsets relative to due date), `schedule.daily_summary` (evening). Also `usage.rollup` (hourly),
   `billing.sync` (daily: trial expiry, 7-day past-due grace → suspend), `health.erpnext` (5 min).
 
+## Lead-to-customer lifecycle
+
+ERPNext changes (Lead → Opportunity → Event → Quotation → Sales Order → Invoice → Payment → Project/Task → Issue →
+Subscription) and Leadvyne leads feed `lifecycle.event`, which starts and closes per-document timers. `lifecycle.scan`
+(every 5 min) sends each configurable reminder level to the owner, escalation contact, customer or management.
+After the first payment, an onboarding Project is created from the *Onboarding Template*. See [lifecycle.md](lifecycle.md).
+
+## Virtual office
+
+A separate staff WhatsApp number (its own Chatwoot inbox, `tenants.cw_staff_inbox_id`) routes team messages to the office
+assistant: check-in/out, stand-ups, tasks, leave, approvals, announcements and meetings. `office.tick` runs the day
+(nudges, end of day, AI team summary, meeting reminders, weekly report). All staff notifications go out from this number.
+The business owner runs it in the app under Team → Office (live floor) and Team → Sales pipeline;
+only the staff number's inbox is connected by NextAi support in the admin console. See [virtual-office.md](virtual-office.md).
+
 ## Auth
 
 - **App**: phone + WhatsApp OTP (sent through the tenant's Chatwoot inbox as a template, hashed in Redis,
@@ -90,7 +105,7 @@ with exponential backoff; corrections are cancel + amend, never delete.
 currency and carries the remaining trial. `/webhooks/stripe` verifies the signature, is idempotent by event
 id, and maps subscription status to tenant status (`trialing → trial`, `active`, `past_due`, others →
 `suspended`). `past_due` shows a banner and sends a WhatsApp notice; `suspended` makes the app read-only and
-the bot replies with the billing link. Plan limits (users, OCR pages, invoices sent, messages, features) are
+the bot replies with the billing link. Plan limits (users, bill entries — `ocrPagesPerMonth`, invoices sent, messages, features) are
 enforced in the API and on WhatsApp.
 
 ## Security checklist

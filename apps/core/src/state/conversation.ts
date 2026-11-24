@@ -1,7 +1,7 @@
 import { CONVERSATION_TTL_SECONDS, type Intent } from '@nextai/shared';
 import type { Redis } from 'ioredis';
 
-export type ConversationStep = 'idle' | 'awaiting_confirm' | 'awaiting_edit' | 'awaiting_field' | 'handover';
+export type ConversationStep = 'idle' | 'awaiting_confirm' | 'awaiting_edit' | 'awaiting_field' | 'awaiting_party' | 'handover';
 
 export interface ConversationState {
   step: ConversationStep;
@@ -9,6 +9,10 @@ export interface ConversationState {
   field?: string;
   pendingIntent?: Intent;
   partial?: Record<string, unknown>;
+  /** awaiting_party: the numbered options that were offered. */
+  choices?: Array<{ title: string; value: string }>;
+  /** awaiting_party: the bank line the entry being drafted is for. */
+  bankLineId?: string;
   updatedAt: number;
 }
 

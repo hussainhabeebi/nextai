@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  APP_STYLES,
+  APP_VIEWS,
   COUNTRIES,
   CURRENCIES,
   DRAFT_STATUSES,
@@ -20,6 +22,40 @@ export const reminderScheduleSchema = z.object({
   offsetsDays: z.array(z.number().int().min(-30).max(90)).default([-3, 0, 7, 14]),
   hourLocal: z.number().int().min(0).max(23).default(10),
 });
+
+/** Lead-to-customer lifecycle settings (used by tenants with an installed playbook). */
+export const lifecycleSettingsSchema = z.object({
+  /** Morning WhatsApp digest to each staff member: their overdue and due-today steps. */
+  digestEnabled: z.boolean().default(true),
+  digestHourLocal: z.number().int().min(0).max(23).default(9),
+  /** Project health score (0-100) below which management is alerted at the day-7 / day-30 reviews. */
+  healthThreshold: z.number().int().min(0).max(100).default(60),
+  /** What the AI chases the customer for during kickoff / data collection. */
+  dataChecklist: z.array(z.string().min(1).max(80)).max(20).default(['Product list', 'Prices', 'FAQs', 'Logo', 'Business hours']),
+  /** A WhatsApp message from a known Customer with no open step creates (or comments on) an ERPNext Issue. */
+  autoIssueFromWhatsApp: z.boolean().default(true),
+});
+export type LifecycleSettings = z.infer<typeof lifecycleSettingsSchema>;
+
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+/** Virtual office (team on the separate staff WhatsApp number). Times are tenant-local. */
+export const officeSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** JS weekdays: 0 = Sunday … 6 = Saturday. */
+  workDays: z.array(z.number().int().min(0).max(6)).default([1, 2, 3, 4, 5, 6]),
+  workStart: hhmm.default('09:00'),
+  /** Check-ins after workStart + this are late; not-checked-in staff are nudged then. */
+  lateAfterMinutes: z.number().int().min(0).max(240).default(15),
+  endOfDay: hhmm.default('18:00'),
+  standupEnabled: z.boolean().default(true),
+  /** AI summary of the team's day to management, one hour after endOfDay. */
+  teamSummaryEnabled: z.boolean().default(true),
+  meetingReminderMinutes: z.number().int().min(1).max(240).default(15),
+  weeklyReport: z.object({ enabled: z.boolean().default(true), weekday: z.number().int().min(0).max(6).default(1), hourLocal: z.number().int().min(0).max(23).default(9) }).prefault({}),
+  /** Create ERPNext Attendance (Present) at check-out for staff with an ERPNext Employee id. */
+  attendanceErpSync: z.boolean().default(false),
+});
+export type OfficeSettings = z.infer<typeof officeSettingsSchema>;
 
 export const EINVOICE_SCHEMES = ['in_irp', 'ae_peppol', 'sa_zatca'] as const;
 export type EInvoiceScheme = (typeof EINVOICE_SCHEMES)[number];
@@ -65,10 +101,26 @@ export const forecastSettingsSchema = z.object({
 
 export const tenantSettingsSchema = z.object({
   taxRegime: z.enum(['gst_regular', 'gst_composition', 'vat', 'vat_ct', 'none']).default('gst_regular'),
+  /** Which filings apply, for deadline warnings. */
+  taxCalendar: z
+    .object({
+      gstFiling: z.enum(['monthly', 'quarterly']).default('monthly'), // quarterly = QRMP
+      tds: z.boolean().default(false),
+      advanceTax: z.boolean().default(true),
+      taxAudit: z.boolean().default(false),
+      vatPeriod: z.enum(['quarterly', 'monthly']).default('quarterly'),
+      /** Months in which UAE VAT quarters end (FTA stagger), e.g. [3, 6, 9, 12]. */
+      vatQuarterEnds: z.array(z.number().int().min(1).max(12)).length(4).default([3, 6, 9, 12]),
+      /** Warn this many days before each deadline. */
+      warnDays: z.array(z.number().int().min(0).max(30)).default([7, 2, 0]),
+    })
+    .prefault({}),
   autoPost: z.boolean().default(false),
   timezone: z.string().default('Asia/Kolkata'),
-  reminders: reminderScheduleSchema.default({}),
-  dailySummary: z.object({ enabled: z.boolean().default(true), hourLocal: z.number().int().min(0).max(23).default(20) }).default({}),
+  reminders: reminderScheduleSchema.prefault({}),
+  dailySummary: z.object({ enabled: z.boolean().default(true), hourLocal: z.number().int().min(0).max(23).default(20) }).prefault({}),
+  /** Daily summary by email (Resend). Owners with an email address always receive it; `recipients` adds accountants etc. */
+  emailReports: z.object({ enabled: z.boolean().default(true), recipients: z.array(z.string().email()).max(10).default([]) }).prefault({}),
   companyName: z.string().optional(),
   taxId: z.string().optional(),
   invoiceTemplate: z.string().optional(),
@@ -82,10 +134,22 @@ export const tenantSettingsSchema = z.object({
   /** ERPNext company abbreviation used in account names, e.g. "Cash - AIL" */
   companyAbbr: z.string().optional(),
   /** Override default account / tax template names */
-  accounts: z.record(z.string()).default({}),
-  taxTemplates: z.record(z.string()).default({}),
+  accounts: z.record(z.string(), z.string()).prefault({}),
+  taxTemplates: z.record(z.string(), z.string()).prefault({}),
   autoSendInvoices: z.boolean().default(true),
-  featureFlags: z.record(z.boolean()).default({}),
+  /** The business's NextAi WhatsApp number (the bot), shown in staff invites. */
+  whatsappNumber: z.string().max(20).optional(),
+  /** Online payment links (Razorpay, India) on invoices and reminders. Account/mode are set up in ERPNext on connect. */
+  paymentLinks: z
+    .object({ enabled: z.boolean().default(true), account: z.string().optional(), modeOfPayment: z.string().optional() })
+    .prefault({}),
+  featureFlags: z.record(z.string(), z.boolean()).prefault({}),
+  lifecycle: lifecycleSettingsSchema.prefault({}),
+  office: officeSettingsSchema.prefault({}),
+  /** Industry layout of the customer app: entry menus, labels and screens. */
+  appView: z.enum(APP_VIEWS).default('general'),
+  /** Colour theme of the customer app. */
+  appStyle: z.enum(APP_STYLES).default('teal'),
   /** Registered business address (required on e-invoices). */
   address: z
     .object({
@@ -97,10 +161,10 @@ export const tenantSettingsSchema = z.object({
       stateCode: z.string(),
     })
     .partial()
-    .default({}),
-  eInvoicing: eInvoicingSettingsSchema.default({}),
-  auditPolicy: auditPolicySchema.default({}),
-  forecast: forecastSettingsSchema.default({}),
+    .prefault({}),
+  eInvoicing: eInvoicingSettingsSchema.prefault({}),
+  auditPolicy: auditPolicySchema.prefault({}),
+  forecast: forecastSettingsSchema.prefault({}),
 });
 export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 
@@ -139,7 +203,7 @@ export const extractionSchema = z.object({
       igst: z.number().default(0),
       vat: z.number().default(0),
     })
-    .default({}),
+    .prefault({}),
   total: z.number().nullable(),
   paymentMode: z.enum(['cash', 'bank', 'card', 'upi', 'credit', 'unknown']).default('unknown'),
   confidence: z.number().min(0).max(1),
@@ -176,6 +240,16 @@ export const draftPayloadSchema = z.object({
   remarks: z.string().optional(),
   documentId: z.string().uuid().optional(),
   createParty: z.boolean().optional(),
+  /** Payment: the invoice (sales for payment_in, purchase for payment_out) this payment settles. */
+  invoiceRef: z.string().optional(),
+  /** Journal entry: "out" = money paid from cash/bank (default), "in" = money received into cash/bank. */
+  direction: z.enum(['in', 'out']).optional(),
+  /** Journal entry: the ledger to create on confirm when it doesn't exist yet (e.g. a new capital account). */
+  newAccount: z.object({ kind: z.string(), name: z.string() }).optional(),
+  /** Sales/purchase invoice: a return (ERPNext credit note / debit note), posted with is_return and negative quantities. */
+  isReturn: z.boolean().optional(),
+  /** Journal entry: the ERPNext voucher type when not the cash/bank default, e.g. "Contra Entry" for cash ↔ bank. */
+  voucherType: z.string().optional(),
   validationIssues: z.array(z.string()).default([]),
 });
 export type DraftPayload = z.infer<typeof draftPayloadSchema>;
@@ -197,8 +271,20 @@ export const intentResultSchema = z.object({
       paymentMode: z.string().optional(),
       report: z.string().optional(),
       question: z.string().optional(),
+      /** add_party / add_account: customer, supplier, expense, income, bank or cash. */
+      kind: z.string().optional(),
+      /** add_account: the ledger name, e.g. "Fuel". (add_party uses `party`.) */
+      accountName: z.string().optional(),
+      /** add_account: the group to put the ledger under, when named ("... under Capital Account"). */
+      group: z.string().optional(),
+      /** add_employee: Female, Male or Other. (The employee's name is in `party`.) */
+      gender: z.string().optional(),
+      /** add_employee: date of birth, YYYY-MM-DD. */
+      birthDate: isoDate.optional(),
+      /** add_employee: date of joining, YYYY-MM-DD. */
+      joiningDate: isoDate.optional(),
     })
-    .default({}),
+    .prefault({}),
 });
 export type IntentResult = z.infer<typeof intentResultSchema>;
 

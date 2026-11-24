@@ -14,6 +14,8 @@ import { Prisma, PrismaClient } from '@prisma/client';
  */
 
 export const TENANT_MODELS = new Set<string>([
+  'PaymentLink',
+  'BankLine',
   'User',
   'Session',
   'Document',
@@ -25,6 +27,16 @@ export const TENANT_MODELS = new Set<string>([
   'OutboundMessage',
   'PushSubscription',
   'WebhookEvent',
+  'StaffMember',
+  'LifecycleRule',
+  'ReminderLevel',
+  'LifecycleTimer',
+  'Attendance',
+  'Standup',
+  'LeaveRequest',
+  'Announcement',
+  'Approval',
+  'Meeting',
   'AuditRun',
   'AuditFinding',
   'EInvoice',

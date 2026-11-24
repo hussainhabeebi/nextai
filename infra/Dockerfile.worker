@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1.7
-FROM node:20-bookworm-slim AS base
+FROM node:22-bookworm-slim AS base
 RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
 
 FROM base AS build
+# @prisma/client is only a transitive dep here, so `prisma generate` inside /out can't find it:
+# generate in the workspace and copy the generated client into the deployed store.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/core ./apps/core
@@ -11,11 +13,18 @@ COPY apps/worker ./apps/worker
 RUN pnpm install --frozen-lockfile --filter @nextai/worker... \
  && pnpm --filter "@nextai/worker^..." build && pnpm --filter @nextai/worker build \
  && pnpm deploy --filter @nextai/worker --prod --legacy /out \
- && cp -r apps/core/prisma /out/prisma && cd /out && npx prisma generate --schema prisma/schema.prisma
+ && cp -r apps/core/prisma /out/prisma \
+ && cd apps/core && ./node_modules/.bin/prisma generate \
+ && for d in /repo/node_modules/.pnpm/@prisma+client@*/node_modules/.prisma; do \
+      n=$(basename "$(dirname "$(dirname "$d")")"); cp -r "$d" "/out/node_modules/.pnpm/$n/node_modules/"; \
+    done
 
 FROM base AS runtime
 ENV NODE_ENV=production SERVICE_NAME=worker
 WORKDIR /app
 COPY --from=build /out ./
+# Shared upload dir when R2 is not configured (mount a volume here in core + worker).
+RUN mkdir -p /data/storage && chown node:node /data/storage
+ENV LOCAL_STORAGE_DIR=/data/storage
 USER node
 CMD ["node", "dist/index.js"]

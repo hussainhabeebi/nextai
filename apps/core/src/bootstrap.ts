@@ -11,11 +11,13 @@ import { chatwootClientFor } from './modules/chatwoot/factory.js';
 import { erpClientFor } from './modules/erpnext/factory.js';
 import { HttpGateway, SandboxGateway } from './modules/einvoice/gateway.js';
 import { FakeProvisionerClient, HttpProvisionerClient } from './modules/provisioning/provisioner-client.js';
+import { MemoryMailer, ResendMailer } from './modules/email/mailer.js';
 import { RedisConversationStore } from './state/conversation.js';
 import { createRedis } from './state/redis.js';
 import { LocalFsStorage, R2Storage } from './storage/storage.js';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { FakeRazorpayClient, razorpayClientFor } from './modules/razorpay/client.js';
 
 /** Build the production container from env. */
 export function createContainer(): Container & { close: () => Promise<void> } {
@@ -30,6 +32,7 @@ export function createContainer(): Container & { close: () => Promise<void> } {
   // MOCK_EXTERNALS=true lets the whole stack run locally without ERPNext/Chatwoot.
   const fakeErp = new Map<string, FakeErpClient>();
   const fakeCw = new Map<string, FakeChatwootClient>();
+  const fakeRzp = new Map<string, FakeRazorpayClient>();
   return {
     prisma,
     redis,
@@ -38,11 +41,20 @@ export function createContainer(): Container & { close: () => Promise<void> } {
     ai: createAiProviders(e),
     conversations: new RedisConversationStore(redis),
     erp: e.MOCK_EXTERNALS ? (t) => fakeErp.get(t.id) ?? fakeErp.set(t.id, new FakeErpClient()).get(t.id)! : erpClientFor,
-    chatwoot: e.MOCK_EXTERNALS ? (t) => fakeCw.get(t.id) ?? fakeCw.set(t.id, new FakeChatwootClient()).get(t.id)! : chatwootClientFor,
+    chatwoot: e.MOCK_EXTERNALS
+      ? (t, ch) => {
+          const k = ch === 'staff' && t.cwStaffInboxId ? `${t.id}:staff` : t.id;
+          return fakeCw.get(k) ?? fakeCw.set(k, new FakeChatwootClient()).get(k)!;
+        }
+      : chatwootClientFor,
     payments:
       e.STRIPE_SECRET_KEY && e.STRIPE_WEBHOOK_SECRET ? new StripeProvider(e.STRIPE_SECRET_KEY, e.STRIPE_WEBHOOK_SECRET) : new FakePaymentProvider(),
+    razorpay: e.MOCK_EXTERNALS
+      ? (t) => (t.rzpKeyId ? (fakeRzp.get(t.id) ?? fakeRzp.set(t.id, new FakeRazorpayClient()).get(t.id)!) : undefined)
+      : razorpayClientFor,
     einvoice: e.EINVOICE_GATEWAY_URL && e.EINVOICE_GATEWAY_TOKEN ? new HttpGateway(e.EINVOICE_GATEWAY_URL, e.EINVOICE_GATEWAY_TOKEN) : new SandboxGateway(),
     provisioner: e.PROVISIONER_URL && e.PROVISIONER_SECRET ? new HttpProvisionerClient(e.PROVISIONER_URL, e.PROVISIONER_SECRET) : new FakeProvisionerClient(),
+    mailer: e.RESEND_API_KEY ? new ResendMailer(e.RESEND_API_KEY, e.MAIL_FROM) : new MemoryMailer(e.MAIL_FROM, false),
     close: async () => {
       await queue.close();
       redis.disconnect();

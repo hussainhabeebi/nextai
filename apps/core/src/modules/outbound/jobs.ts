@@ -7,11 +7,23 @@ import { erpContext } from '../erpnext/mappers.js';
 import { incrementUsage } from '../usage/usage.js';
 import { sendWhatsApp } from './whatsapp.js';
 import { planLimits, usageFor } from '../billing/gating.js';
+import { emailDailySummary } from '../email/reports.js';
+import { paymentLinkFor } from '../razorpay/service.js';
+import { buildBriefing } from '../briefing/briefing.js';
+import { localDate } from './time.js';
 
 type SI = { name: string; customer: string; grand_total: number; outstanding_amount: number; due_date: string; currency: string; contact_mobile?: string; docstatus: number };
 
 async function loadTenant(c: Container, tenantId: string): Promise<Tenant> {
   return withSystemTx(c.prisma, (tx) => tx.tenant.findUniqueOrThrow({ where: { id: tenantId } }));
+}
+
+async function lastSent(c: Container, tenantId: string, kind: string, ref: string, sinceMs: number): Promise<Date | undefined> {
+  const hit = await tenantDb(c.prisma, tenantId).outboundMessage.findFirst({
+    where: { kind, ref, status: 'sent', createdAt: { gte: new Date(Date.now() - sinceMs) } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return hit?.createdAt;
 }
 
 async function alreadySent(c: Container, tenantId: string, kind: string, ref: string, sinceMs = 0): Promise<boolean> {
@@ -33,6 +45,16 @@ async function customerPhone(c: Container, tenant: Tenant, customer: string, hin
   }
 }
 
+/** A payment link when the business takes online payments; a Razorpay hiccup never blocks the invoice or reminder. */
+async function linkOrNothing(c: Container, tenant: Tenant, inv: SI, phone?: string): Promise<string | undefined> {
+  try {
+    return await paymentLinkFor(c, tenant, inv, phone);
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, invoice: inv.name, err: (err as Error).message }, 'payment link failed; sending without it');
+    return undefined;
+  }
+}
+
 /** outbound.invoice: Sales Invoice PDF → customer's WhatsApp (template + document). */
 export async function sendInvoice(c: Container, job: { tenantId: string; invoiceName: string; draftId?: string }) {
   const tenant = await loadTenant(c, job.tenantId);
@@ -46,13 +68,14 @@ export async function sendInvoice(c: Container, job: { tenantId: string; invoice
   if (!phone) return { skipped: 'no_phone' };
   const pdf = await erp.downloadPdf('Sales Invoice', inv.name, erpContext(tenant).settings.invoiceTemplate);
   const cur = (inv.currency ?? tenant.currency) as Currency;
+  const payUrl = await linkOrNothing(c, tenant, inv, phone);
+  const params = [inv.customer, tenant.name, inv.name, formatMoney(inv.grand_total, cur), inv.due_date];
   await sendWhatsApp(c, tenant, {
     kind: 'invoice',
     phone,
     name: inv.customer,
-    templateKey: 'invoice',
-    params: [inv.customer, tenant.name, inv.name, formatMoney(inv.grand_total, cur), inv.due_date],
-    fallbackText: `Hi ${inv.customer}, here is invoice ${inv.name} from ${tenant.name} for ${formatMoney(inv.grand_total, cur)}, due ${inv.due_date}.`,
+    ...(payUrl ? { templateKey: 'invoice_pay', params: [...params, payUrl], alt: { templateKey: 'invoice', params } } : { templateKey: 'invoice', params }),
+    fallbackText: `Hi ${inv.customer}, here is invoice ${inv.name} from ${tenant.name} for ${formatMoney(inv.grand_total, cur)}, due ${inv.due_date}.${payUrl ? `\nPay online: ${payUrl}` : ''}`,
     file: { filename: `${inv.name}.pdf`, content: pdf, mime: 'application/pdf' },
     ref: inv.name,
   });
@@ -120,35 +143,84 @@ export async function sendReminder(
     return { skipped: 'nothing_outstanding' };
   }
   let sent = 0;
+  const noPhone: SI[] = [];
+  const recent: Array<{ inv: SI; at: Date }> = [];
   for (const inv of invoices) {
     // at most one reminder per invoice per 20h
-    if (await alreadySent(c, tenant.id, 'reminder', inv.name, 20 * 3600_000)) continue;
+    const last = await lastSent(c, tenant.id, 'reminder', inv.name, 20 * 3600_000);
+    if (last) {
+      recent.push({ inv, at: last });
+      continue;
+    }
     const phone = await customerPhone(c, tenant, inv.customer);
-    if (!phone) continue;
+    if (!phone) {
+      noPhone.push(inv);
+      continue;
+    }
     const cur = (inv.currency ?? tenant.currency) as Currency;
     const amount = formatMoney(inv.outstanding_amount, cur);
+    const payUrl = await linkOrNothing(c, tenant, inv, phone);
+    const params = [inv.customer, tenant.name, amount, inv.name, inv.due_date];
     await sendWhatsApp(c, tenant, {
       kind: 'reminder',
       phone,
       name: inv.customer,
-      templateKey: 'reminder',
-      params: [inv.customer, tenant.name, amount, inv.name, inv.due_date],
-      fallbackText: t(lang, 'bot.reminder', { party: inv.customer, amount, ref: inv.name }),
+      ...(payUrl ? { templateKey: 'reminder_pay', params: [...params, payUrl], alt: { templateKey: 'reminder', params } } : { templateKey: 'reminder', params }),
+      fallbackText: t(lang, 'bot.reminder', { party: inv.customer, amount, ref: inv.name }) + (payUrl ? `\nPay online: ${payUrl}` : ''),
       ref: inv.name,
     });
     sent++;
   }
-  await reply(sent ? `⏰ Sent ${sent} reminder(s).` : 'No reminder sent (no WhatsApp number on file or reminded recently).');
-  return { sent };
+
+  const tz = erpContext(tenant).settings.timezone;
+  const who = job.party ? invoices[0]!.customer : undefined;
+  const status: string[] = [];
+  if (sent) status.push(`✅ Sent ${sent} reminder${sent === 1 ? '' : 's'}${who ? ` to ${who}` : ''}.`);
+  if (recent.length) {
+    const at = new Intl.DateTimeFormat('en-IN', { timeZone: tz, hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' }).format(recent[0]!.at);
+    status.push(`⏳ Already reminded about ${recent.map((r) => r.inv.name).join(', ')} (last at ${at}). I wait 20 hours between reminders.`);
+  }
+  if (noPhone.length) {
+    status.push(`📵 No WhatsApp number on file for ${[...new Set(noPhone.map((i) => i.customer))].join(', ')}.`);
+    status.push(`📋 I've made a ready reminder below — forward it to them.`);
+    status.push(`💡 Add their mobile number in ERPNext (Customer → Mobile No) and I'll send reminders myself next time.`);
+  }
+  await reply(status.join('\n'));
+  // Auto-created reminder the owner can forward by hand (one message per customer, easy to forward).
+  for (const [customer, list] of groupBy(noPhone, (i) => i.customer)) {
+    const links = new Map<string, string | undefined>();
+    for (const inv of list) links.set(inv.name, await linkOrNothing(c, tenant, inv));
+    await reply(reminderMessage(tenant, customer, list, links, localDate(tz)));
+  }
+  return { sent, ...(noPhone.length ? { noPhone: noPhone.length } : {}), ...(recent.length ? { recent: recent.length } : {}) };
 }
 
-/** Hour of day in the tenant's timezone. */
-export function localHour(timezone: string, at = new Date()): number {
-  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', hourCycle: 'h23' }).format(at));
+const groupBy = <T>(xs: T[], key: (x: T) => string) => {
+  const m = new Map<string, T[]>();
+  for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
+  return m;
+};
+
+const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** A polite, structured payment reminder for the customer, ready to forward. */
+export function reminderMessage(tenant: Tenant, customer: string, invoices: SI[], payLinks: Map<string, string | undefined>, today: string): string {
+  const m = (inv: SI) => formatMoney(inv.outstanding_amount, (inv.currency ?? tenant.currency) as Currency);
+  const total = invoices.reduce((s, i) => s + i.outstanding_amount, 0);
+  const lines = [`Hi ${customer} 👋`, '', `This is a friendly payment reminder from *${tenant.name}*.`, '', '━━━━━━━━━━━━━━━━━━'];
+  for (const inv of invoices) {
+    const late = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${inv.due_date}T00:00:00Z`)) / 86400_000);
+    lines.push(`🧾 Invoice *${inv.name}*`, `💰 Amount due: *${m(inv)}*`, `📅 Due date: ${shortDate(inv.due_date)}${late > 0 ? ` (${late} day${late === 1 ? '' : 's'} overdue)` : ''}`);
+    const link = payLinks.get(inv.name);
+    if (link) lines.push(`💳 Pay online: ${link}`);
+    lines.push('━━━━━━━━━━━━━━━━━━');
+  }
+  if (invoices.length > 1) lines.push(`*Total due: ${formatMoney(total, (invoices[0]!.currency ?? tenant.currency) as Currency)}*`);
+  lines.push('', 'Kindly arrange the payment at the earliest. If you have already paid, please ignore this message 🙏', '', `Thank you,`, `${tenant.name}`);
+  return lines.join('\n');
 }
-export function localDate(timezone: string, at = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
-}
+
+export { localDate, localHour } from './time.js';
 
 const addDays = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
 
@@ -173,8 +245,8 @@ export async function scanReminders(c: Container, tenant: Tenant, at = new Date(
   return invoices.length;
 }
 
-/** Evening WhatsApp summary to owners. Figures come from NextAi-posted drafts + ERPNext balances. */
-export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
+/** Today's figures for the summary. Figures come from NextAi-posted drafts + ERPNext balances. */
+export async function summaryFigures(c: Container, tenant: Tenant, at = new Date()) {
   const { settings, company } = erpContext(tenant);
   const day = localDate(settings.timezone, at);
   const db = tenantDb(c.prisma, tenant.id);
@@ -182,10 +254,10 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
   const today = posted.filter((d) => (d.payload as DraftPayload).date === day);
   const sum = (types: string[]) => today.filter((d) => types.includes(d.type)).reduce((s, d) => s + (d.payload as DraftPayload).total, 0);
   const cur = tenant.currency as Currency;
-  let cash = 0;
+  let cash: string = 'not available right now'; // never a made-up ₹0.00 when ERPNext can't be read
   try {
     const b = await c.erp(tenant).getBalances(company);
-    cash = b.cash + b.bank;
+    cash = formatMoney(b.cash + b.bank, cur);
   } catch (err) {
     logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'balances unavailable for summary');
   }
@@ -193,9 +265,23 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
   const vars = {
     sales: formatMoney(sum(['sales_invoice']), cur),
     expenses: formatMoney(sum(['purchase_invoice', 'journal_entry']), cur),
-    cash: formatMoney(cash, cur),
+    cash,
     pending: String(pending),
   };
+  return { day, vars };
+}
+
+/** Daily briefing to owners: email (Resend) and WhatsApp (Chatwoot). Approved template outside the 24h window. */
+export async function sendDailySummary(c: Container, tenant: Tenant, at = new Date()) {
+  const b = await buildBriefing(c, tenant, at);
+  const db = tenantDb(c.prisma, tenant.id);
+  // Email (Resend) first so a WhatsApp failure never blocks it, and vice versa.
+  try {
+    await emailDailySummary(c, tenant, b.day, b.templateVars, { rows: b.rows });
+  } catch (err) {
+    logger.warn({ tenantId: tenant.id, err: (err as Error).message }, 'summary email failed');
+  }
+  if (!tenant.cwBotTokenEnc) return b.templateVars;
   const owners = await db.user.findMany({ where: { role: 'owner', status: 'active', phone: { not: null } } });
   for (const o of owners) {
     await sendWhatsApp(c, tenant, {
@@ -203,10 +289,10 @@ export async function sendDailySummary(c: Container, tenant: Tenant, at = new Da
       phone: o.phone!,
       name: o.name,
       templateKey: 'daily_summary',
-      params: [vars.sales, vars.expenses, vars.cash, vars.pending],
-      fallbackText: t((o.language ?? tenant.language) as Language, 'bot.dailySummary', vars),
-      ref: `summary-${day}`,
+      params: [b.templateVars.sales, b.templateVars.expenses, b.templateVars.cash, b.templateVars.pending],
+      fallbackText: b.text,
+      ref: `summary-${b.day}`,
     });
   }
-  return vars;
+  return b.templateVars;
 }

@@ -15,7 +15,7 @@ export function LogoMark({ className, mono }: { className?: string; mono?: 'blac
 }
 
 export function Wordmark({ className, mono }: { className?: string; mono?: 'black' | 'white' }) {
-  const next = mono === 'black' ? 'text-black' : mono === 'white' ? 'text-white' : 'text-brand';
+  const next = mono === 'black' ? 'text-black' : mono === 'white' ? 'text-white' : 'text-[#0E7A6B]'; // fixed: the NextAi logo keeps its colour whatever the tenant theme
   const ai = mono === 'black' ? 'text-black' : mono === 'white' ? 'text-white' : 'text-brand-amber';
   return (
     <span className={cn('font-brand font-extrabold tracking-tight', className)}>
@@ -45,7 +45,7 @@ export function LogoStacked({ className }: { className?: string }) {
 
 export function AppIcon({ className }: { className?: string }) {
   return (
-    <span className={cn('inline-flex items-center justify-center rounded-[22%] bg-brand', className)} aria-hidden="true">
+    <span className={cn('inline-flex items-center justify-center rounded-[22%] bg-[#0E7A6B]', className)} aria-hidden="true">
       <LogoMark className="h-3/4 w-3/4" mono="white" />
     </span>
   );

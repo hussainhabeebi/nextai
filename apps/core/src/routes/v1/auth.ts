@@ -9,6 +9,8 @@ import { unauthorized } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { audit } from '../../modules/audit/audit.js';
 import { checkOtp, issueOtp, otpFallbackText, otpLogLabel } from '../../modules/auth/otp.js';
+import { reportEmail } from '../../modules/email/templates.js';
+import { consumeMagicToken } from '../../modules/signup/service.js';
 import { APP_REFRESH_TTL_DAYS, hashRefresh, newRefreshToken, signAccess } from '../../modules/auth/tokens.js';
 import { sendWhatsApp } from '../../modules/outbound/whatsapp.js';
 
@@ -22,7 +24,25 @@ const tokenResponse = z.object({
   memberships: membershipsSchema,
 });
 
-async function membershipsForPhone(c: Container, phone: string) {
+/**
+ * The number as typed ("050 123 4567", "98765 43210", "+971…") → the stored E.164 number with memberships.
+ * Local formats are tried for India and the UAE: staff are stored in their business's format.
+ */
+async function resolveLoginPhone(c: Container, raw: string) {
+  const candidates = [...new Set([normalizePhone(raw, 'IN'), normalizePhone(raw, 'AE')])];
+  for (const phone of candidates) {
+    const members = await membershipsForPhone(c, phone);
+    if (members.length) return { phone, members };
+  }
+  return { phone: candidates[0]!, members: [] as Awaited<ReturnType<typeof membershipsForPhone>> };
+}
+
+/** First login (or first WhatsApp message) of an invited member makes them active. */
+export async function activateInvited(c: Container, phone: string) {
+  await withSystemTx(c.prisma, (tx) => tx.user.updateMany({ where: { phone, status: 'invited' }, data: { status: 'active' } }));
+}
+
+export async function membershipsForPhone(c: Container, phone: string) {
   return withSystemTx(c.prisma, (tx) =>
     tx.user.findMany({
       where: { phone, status: { not: 'disabled' }, tenantId: { not: null }, tenant: { status: { not: 'suspended' } } },
@@ -49,15 +69,40 @@ export const appAuthRoutes =
 
     app.post(
       '/otp/request',
-      { ...strict, schema: { tags: ['auth'], body: otpRequestSchema, response: { 200: z.object({ sent: z.boolean(), devCode: z.string().optional() }) } } },
+      { ...strict, schema: { tags: ['auth'], body: otpRequestSchema, response: { 200: z.object({ sent: z.boolean(), channel: z.enum(['whatsapp', 'email', 'none']).optional(), message: z.string().optional(), devCode: z.string().optional() }) } } },
       async (req) => {
-        const phone = normalizePhone(req.body.phone);
-        const members = await membershipsForPhone(c, phone);
+        const { phone, members } = await resolveLoginPhone(c, req.body.phone);
         // Do not reveal whether the number is registered.
-        if (members.length === 0) return { sent: true };
+        if (members.length === 0) return { sent: true, channel: 'whatsapp' as const };
         const issued = await issueOtp(c.redis, phone);
         if ('throttled' in issued) return { sent: true };
-        const first = members.find((m) => m.tenant!.cwInboxId) ?? members[0]!;
+        const withWhatsApp = members.find((m) => m.tenant!.cwBotTokenEnc);
+        const email = members.find((m) => m.email)?.email;
+        if (!withWhatsApp && (!email || !c.mailer.configured)) {
+          // A staff member of a business whose WhatsApp isn't connected yet, with no email on file: say so.
+          return {
+            sent: false,
+            channel: 'none' as const,
+            message: "We can't send you a code yet: your business's WhatsApp isn't connected. Ask the owner to add your email in Settings → Team, then try again.",
+            devCode: isProd() ? undefined : issued.code,
+          };
+        }
+        if (!withWhatsApp && email) {
+          // Self-signup clients until their WhatsApp number is connected: the code goes by email.
+          const mail = reportEmail({
+            title: `Your NextAi login code: ${issued.code}`,
+            intro: 'Enter this code in the NextAi app. It expires in 5 minutes. Never share it.',
+            rows: [{ label: 'Login code', value: issued.code }],
+            footer: 'If you did not try to log in, ignore this email.',
+          });
+          try {
+            await c.mailer.send({ to: [email], subject: `${issued.code} is your NextAi login code`, html: mail.html, text: mail.text, tags: { kind: 'login_code' } });
+          } catch (err) {
+            logger.warn({ phone: otpLogLabel(phone), err: (err as Error).message }, 'otp email failed');
+          }
+          return { sent: true, channel: 'email' as const, devCode: isProd() ? undefined : issued.code };
+        }
+        const first = withWhatsApp ?? members[0]!;
         try {
           await sendWhatsApp(c, first.tenant!, {
             kind: 'otp',
@@ -70,14 +115,27 @@ export const appAuthRoutes =
         } catch (err) {
           logger.warn({ phone: otpLogLabel(phone), err: (err as Error).message }, 'otp delivery failed');
         }
-        return { sent: true, devCode: isProd() ? undefined : issued.code };
+        return { sent: true, channel: 'whatsapp' as const, devCode: isProd() ? undefined : issued.code };
       },
     );
 
+    /** One-time "open the app" link from signup (`/login#t=…`): single use, 15 minutes. */
+    app.post('/magic', { ...strict, schema: { tags: ['auth'], body: z.object({ token: z.string().min(20).max(100) }), response: { 200: tokenResponse } } }, async (req, reply) => {
+      const userId = await consumeMagicToken(c, req.body.token);
+      if (!userId) throw unauthorized('This link has expired. Log in with your WhatsApp number.');
+      const user = await withSystemTx(c.prisma, (tx) => tx.user.findUnique({ where: { id: userId } }));
+      if (!user?.phone) throw unauthorized();
+      const members = await membershipsForPhone(c, user.phone);
+      const chosen = members.find((m) => m.id === user.id);
+      if (!chosen) throw unauthorized();
+      await activateInvited(c, user.phone);
+      return issueSession(c, req, reply, chosen, members);
+    });
+
     app.post('/otp/verify', { ...strict, schema: { tags: ['auth'], body: otpVerifySchema, response: { 200: tokenResponse } } }, async (req, reply) => {
-      const phone = normalizePhone(req.body.phone);
+      const { phone, members } = await resolveLoginPhone(c, req.body.phone);
       if (!(await checkOtp(c.redis, phone, req.body.code))) throw unauthorized('Invalid or expired code');
-      const members = await membershipsForPhone(c, phone);
+      await activateInvited(c, phone);
       const chosen = (req.body.tenantId && members.find((m) => m.tenantId === req.body.tenantId)) || members[0];
       if (!chosen) throw unauthorized();
       return issueSession(c, req, reply, chosen, members);
